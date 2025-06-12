@@ -7,6 +7,9 @@
  * Full text of license available in license.txt file, in main folder
  *
  */
+#include <fstream>
+#include "../../external/json/json.hpp"
+
 #include "StdInc.h"
 #include "BattleActionsController.h"
 
@@ -1029,6 +1032,77 @@ bool BattleActionsController::canStackMoveHere(const CStack * stackToMove, const
 		return false;
 }
 
+std::string toString(PossiblePlayerBattleAction::Actions action) {
+    switch (action)
+    {
+        case PossiblePlayerBattleAction::INVALID: return "INVALID";
+        case PossiblePlayerBattleAction::CREATURE_INFO: return "CREATURE_INFO";
+        case PossiblePlayerBattleAction::HERO_INFO: return "HERO_INFO";
+        case PossiblePlayerBattleAction::MOVE_TACTICS: return "MOVE_TACTICS";
+        case PossiblePlayerBattleAction::CHOOSE_TACTICS_STACK: return "CHOOSE_TACTICS_STACK";
+        case PossiblePlayerBattleAction::MOVE_STACK: return "MOVE_STACK";
+        case PossiblePlayerBattleAction::ATTACK: return "ATTACK";
+        case PossiblePlayerBattleAction::WALK_AND_ATTACK: return "WALK_AND_ATTACK";
+        case PossiblePlayerBattleAction::ATTACK_AND_RETURN: return "ATTACK_AND_RETURN";
+        case PossiblePlayerBattleAction::SHOOT: return "SHOOT";
+        case PossiblePlayerBattleAction::CATAPULT: return "CATAPULT";
+        case PossiblePlayerBattleAction::HEAL: return "HEAL";
+        case PossiblePlayerBattleAction::RANDOM_GENIE_SPELL: return "RANDOM_GENIE_SPELL";
+        case PossiblePlayerBattleAction::NO_LOCATION: return "NO_LOCATION";
+        case PossiblePlayerBattleAction::ANY_LOCATION: return "ANY_LOCATION";
+        case PossiblePlayerBattleAction::OBSTACLE: return "OBSTACLE";
+        case PossiblePlayerBattleAction::TELEPORT: return "TELEPORT";
+        case PossiblePlayerBattleAction::SACRIFICE: return "SACRIFICE";
+        case PossiblePlayerBattleAction::FREE_LOCATION: return "FREE_LOCATION";
+        case PossiblePlayerBattleAction::AIMED_SPELL_CREATURE: return "AIMED_SPELL_CREATURE";
+        default: return "UNKNOWN";
+    }
+}
+
+void exportPossibleActionsToJson(const CStack *stack, const std::vector<PossiblePlayerBattleAction> &actions)
+{
+	using json = nlohmann::json;
+	if (!stack)
+		return;
+
+	json out;
+	auto origin = stack->getPosition();
+	out["stack_id"] = stack->unitId();
+	out["origin_hex"] = origin.toInt();
+	out["origin_x"] = origin.getX();
+	out["origin_y"] = origin.getY();
+
+	json arr = json::array();
+
+	for (const auto &action : actions)
+	{
+		json a;
+		a["action"] = toString(action.get());
+
+		// only export target_hex for actions that use it
+		switch (action.get())
+		{
+			case PossiblePlayerBattleAction::MOVE_STACK:
+			case PossiblePlayerBattleAction::ATTACK:
+			case PossiblePlayerBattleAction::WALK_AND_ATTACK:
+			case PossiblePlayerBattleAction::TELEPORT:
+			case PossiblePlayerBattleAction::SACRIFICE:
+			case PossiblePlayerBattleAction::AIMED_SPELL_CREATURE:
+			case PossiblePlayerBattleAction::OBSTACLE:
+				break;
+		}
+
+		arr.push_back(a);
+	}
+
+	out["possible_actions"] = arr;
+
+	// Write it out
+	std::filesystem::create_directories("../../export");
+	std::ofstream file("../../export/stack_" + std::to_string(stack->unitId()) + "_actions.json");
+	file << out.dump(2);
+}
+
 void BattleActionsController::activateStack()
 {
 	const CStack * s = owner.stacksController->getActiveStack();
@@ -1037,6 +1111,7 @@ void BattleActionsController::activateStack()
 		tryActivateStackSpellcasting(s);
 
 		possibleActions = getPossibleActionsForStack(s);
+		exportPossibleActionsToJson(s, possibleActions);
 		std::list<PossiblePlayerBattleAction> actionsToSelect;
 		if(!possibleActions.empty())
 		{
