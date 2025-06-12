@@ -1,3 +1,5 @@
+/export
+
 /client/vcmiclient
 /server/vcmiserver
 /launcher/.lupdate
