@@ -85,6 +85,27 @@ std::string toString(PossiblePlayerBattleAction::Actions action)
 	}
 }
 
+void BattleInfo::initExportFileName()
+{
+	if (!exportFileName.empty())
+		return;
+
+	auto now = std::chrono::system_clock::now();
+	auto t = std::chrono::system_clock::to_time_t(now);
+	std::tm tm = *std::localtime(&t);
+
+	std::ostringstream timestampStream;
+	timestampStream << std::put_time(&tm, "%Y%m%d_%H%M");
+
+	std::random_device rd;
+	std::mt19937 gen(rd());
+	std::uniform_int_distribution<> dis(1000, 9999);
+	int randomID = dis(gen);
+
+	exportFileName = "battle_" + timestampStream.str() + "_" + std::to_string(randomID) + ".json";
+}
+
+
 void BattleInfo::exportBattleStateToJson()
 {
 	static bool exportToggle = false;
@@ -98,12 +119,13 @@ void BattleInfo::exportBattleStateToJson()
 	json turnData;
 	turnData["_turn"] = turnCounter++;
 
+	initExportFileName();
 	// Set up log file path
 	const std::filesystem::path logDir = "../../export";
 	if (!std::filesystem::exists(logDir))
 		std::filesystem::create_directories(logDir);
-
-	const std::string logFilePath = (logDir / "battle_log.json").string();
+		
+	const std::string logFilePath = (logDir / exportFileName).string();
 
 	// Basic tactical info
 	turnData["tactic_distance"] = tacticDistance;
