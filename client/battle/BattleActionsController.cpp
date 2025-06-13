@@ -1129,6 +1129,8 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
             const CSpell *spellPtr = spell.toSpell();
             if (spellPtr)
             {	
+				spellJson["can_cast_now"] = spellPtr->canBeCast(owner.getBattle().get(), spells::Mode::HERO, castingHero);
+
                 for (const CStack *unit : owner.getBattle()->battleGetAllStacks())
                 {
                     if (!unit->alive()) continue;
