@@ -1117,6 +1117,7 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
     if (castingHero && castingHero->hasSpellbook())
     {
         j["hero_spellcasting_available"] = true;
+        j["hero_can_still_cast_this_round"] = owner.getBattle()->battleCanCastSpell(castingHero, spells::Mode::HERO) == ESpellCastProblem::OK;
 
         nlohmann::json heroSpells = nlohmann::json::array();
         for (const auto &spell : castingHero->getSpellsInSpellbook())
@@ -1127,7 +1128,7 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
 
             const CSpell *spellPtr = spell.toSpell();
             if (spellPtr)
-            {
+            {	
                 for (const CStack *unit : owner.getBattle()->battleGetAllStacks())
                 {
                     if (!unit->alive()) continue;
@@ -1143,6 +1144,8 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
             heroSpells.push_back(spellJson);
         }
         j["hero_spells"] = heroSpells;
+
+        
     }
     else
     {
