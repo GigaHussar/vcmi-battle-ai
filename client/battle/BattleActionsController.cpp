@@ -1032,8 +1032,6 @@ bool BattleActionsController::canStackMoveHere(const CStack * stackToMove, const
 		return false;
 }
 
-// Extended exportPossibleActionsToJson for full action detail with spell availability check
-
 void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, const std::vector<PossiblePlayerBattleAction> &actions)
 {
     nlohmann::json j;
@@ -1044,6 +1042,53 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
         {"y", pos.getY()}
     };
     j["actions"] = nlohmann::json::array();
+
+    // Add spellcaster flag
+    bool isSpellcaster = stack->hasBonusOfType(BonusType::SPELLCASTER) && stack->canCast();
+    j["is_spellcaster"] = isSpellcaster;
+
+    // Determine creature spellcasting targets
+    nlohmann::json spellcastTargets = nlohmann::json::array();
+
+    if (isSpellcaster)
+    {
+        for (const auto &action : actions)
+        {
+            if (action.get() != PossiblePlayerBattleAction::NO_LOCATION)
+                continue;
+
+            const spells::Caster *caster = stack;
+            const CSpell *spell = action.spell().toSpell();
+            if (!spell)
+                continue;
+
+            spells::Target target;
+            target.emplace_back();
+            spells::BattleCast cast(owner.getBattle().get(), caster, spells::Mode::CREATURE_ACTIVE, spell);
+            auto m = spell->battleMechanics(&cast);
+            spells::detail::ProblemImpl ignored;
+
+            if (m->canBeCastAt(target, ignored))
+            {
+                for (const CStack *unit : owner.getBattle()->battleGetAllStacks())
+                {
+                    if (!unit->alive())
+                        continue;
+                    if (!isCastingPossibleHere(spell, unit, unit->getPosition()))
+                        continue;
+
+                    spellcastTargets.push_back({
+                        {"stack_id", unit->unitId()},
+                        {"x", unit->position.getX()},
+                        {"y", unit->position.getY()}
+                    });
+                }
+                break;
+            }
+        }
+    }
+    j["creature_spellcast_possible"] = !spellcastTargets.empty();
+    j["creature_spellcast_targets"] = spellcastTargets;
 
     for (const auto &action : actions)
     {
