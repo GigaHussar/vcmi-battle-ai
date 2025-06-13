@@ -1090,6 +1090,50 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
     j["creature_spellcast_possible"] = !spellcastTargets.empty();
     j["creature_spellcast_targets"] = spellcastTargets;
 
+    // Hero spellcasting info
+    const CGHeroInstance *castingHero = (owner.attackingHeroInstance && owner.attackingHeroInstance->tempOwner == owner.curInt->playerID)
+                                        ? owner.attackingHeroInstance
+                                        : owner.defendingHeroInstance;
+
+    if (castingHero && castingHero->hasSpellbook())
+    {
+        j["hero_spellcasting_available"] = true;
+
+        nlohmann::json heroSpells = nlohmann::json::array();
+        for (const auto &spell : castingHero->getSpellsInSpellbook())
+        {
+            nlohmann::json spellJson;
+            spellJson["spell_id"] = spell.getNum();
+            spellJson["targets"] = nlohmann::json::array();
+
+            const CSpell *spellPtr = spell.toSpell();
+            if (spellPtr)
+            {
+                
+                
+
+                for (const CStack *unit : owner.getBattle()->battleGetAllStacks())
+                {
+                    if (!unit->alive()) continue;
+                    if (!isCastingPossibleHere(spellPtr, unit, unit->getPosition())) continue;
+
+                    spellJson["targets"].push_back({
+                        {"stack_id", unit->unitId()},
+                        {"x", unit->position.getX()},
+                        {"y", unit->position.getY()}
+                    });
+                }
+            }
+            heroSpells.push_back(spellJson);
+        }
+        j["hero_spells"] = heroSpells;
+    }
+    else
+    {
+        j["hero_spellcasting_available"] = false;
+        j["hero_spells"] = nlohmann::json::array();
+    }
+
     for (const auto &action : actions)
     {
         nlohmann::json a;
