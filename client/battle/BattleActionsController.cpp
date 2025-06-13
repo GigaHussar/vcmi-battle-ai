@@ -1032,76 +1032,140 @@ bool BattleActionsController::canStackMoveHere(const CStack * stackToMove, const
 		return false;
 }
 
-std::string toString(PossiblePlayerBattleAction::Actions action) {
-    switch (action)
-    {
-        case PossiblePlayerBattleAction::INVALID: return "INVALID";
-        case PossiblePlayerBattleAction::CREATURE_INFO: return "CREATURE_INFO";
-        case PossiblePlayerBattleAction::HERO_INFO: return "HERO_INFO";
-        case PossiblePlayerBattleAction::MOVE_TACTICS: return "MOVE_TACTICS";
-        case PossiblePlayerBattleAction::CHOOSE_TACTICS_STACK: return "CHOOSE_TACTICS_STACK";
-        case PossiblePlayerBattleAction::MOVE_STACK: return "MOVE_STACK";
-        case PossiblePlayerBattleAction::ATTACK: return "ATTACK";
-        case PossiblePlayerBattleAction::WALK_AND_ATTACK: return "WALK_AND_ATTACK";
-        case PossiblePlayerBattleAction::ATTACK_AND_RETURN: return "ATTACK_AND_RETURN";
-        case PossiblePlayerBattleAction::SHOOT: return "SHOOT";
-        case PossiblePlayerBattleAction::CATAPULT: return "CATAPULT";
-        case PossiblePlayerBattleAction::HEAL: return "HEAL";
-        case PossiblePlayerBattleAction::RANDOM_GENIE_SPELL: return "RANDOM_GENIE_SPELL";
-        case PossiblePlayerBattleAction::NO_LOCATION: return "NO_LOCATION";
-        case PossiblePlayerBattleAction::ANY_LOCATION: return "ANY_LOCATION";
-        case PossiblePlayerBattleAction::OBSTACLE: return "OBSTACLE";
-        case PossiblePlayerBattleAction::TELEPORT: return "TELEPORT";
-        case PossiblePlayerBattleAction::SACRIFICE: return "SACRIFICE";
-        case PossiblePlayerBattleAction::FREE_LOCATION: return "FREE_LOCATION";
-        case PossiblePlayerBattleAction::AIMED_SPELL_CREATURE: return "AIMED_SPELL_CREATURE";
-        default: return "UNKNOWN";
-    }
-}
+// Extended exportPossibleActionsToJson for full action detail with spell availability check
 
-void exportPossibleActionsToJson(const CStack *stack, const std::vector<PossiblePlayerBattleAction> &actions)
+void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, const std::vector<PossiblePlayerBattleAction> &actions)
 {
-	using json = nlohmann::json;
-	if (!stack)
-		return;
+    nlohmann::json j;
+    j["stack_id"] = stack->unitId();
+    const BattleHex &pos = stack->position;
+    j["origin"] = {
+        {"x", pos.getX()},
+        {"y", pos.getY()}
+    };
+    j["actions"] = nlohmann::json::array();
 
-	json out;
-	auto origin = stack->getPosition();
-	out["stack_id"] = stack->unitId();
-	out["origin_hex"] = origin.toInt();
-	out["origin_x"] = origin.getX();
-	out["origin_y"] = origin.getY();
+    for (const auto &action : actions)
+    {
+        nlohmann::json a;
+        a["type"] = static_cast<int>(action.get());
 
-	json arr = json::array();
+        switch (action.get())
+        {
+            case PossiblePlayerBattleAction::MOVE_STACK:
+            {
+                a["reachable_tiles"] = nlohmann::json::array();
+                BattleHexArray reachable = owner.getBattle()->battleGetAvailableHexes(stack, false);
+                for (const BattleHex &hex : reachable)
+                {
+                    a["reachable_tiles"].push_back({
+                        {"x", hex.getX()},
+                        {"y", hex.getY()}
+                    });
+                }
+                break;
+            }
+            case PossiblePlayerBattleAction::ATTACK:
+            case PossiblePlayerBattleAction::ATTACK_AND_RETURN:
+            case PossiblePlayerBattleAction::WALK_AND_ATTACK:
+            {
+                a["melee_targets"] = nlohmann::json::array();
+                for (const CStack *target : owner.getBattle()->battleGetAllStacks())
+                {
+                    if (target != stack && target->alive() && target->unitSide() != stack->unitSide())
+                    {
+                        BattleHex fromHex;
+                        if (owner.fieldController)
+                            fromHex = owner.fieldController->fromWhichHexAttack(target->getPosition());
 
-	for (const auto &action : actions)
-	{
-		json a;
-		a["action"] = toString(action.get());
+                        nlohmann::json targetEntry = {
+                            {"stack_id", target->unitId()},
+                            {"x", target->position.getX()},
+                            {"y", target->position.getY()}
+                        };
 
-		// only export target_hex for actions that use it
-		switch (action.get())
-		{
-			case PossiblePlayerBattleAction::MOVE_STACK:
-			case PossiblePlayerBattleAction::ATTACK:
-			case PossiblePlayerBattleAction::WALK_AND_ATTACK:
-			case PossiblePlayerBattleAction::TELEPORT:
-			case PossiblePlayerBattleAction::SACRIFICE:
-			case PossiblePlayerBattleAction::AIMED_SPELL_CREATURE:
-			case PossiblePlayerBattleAction::OBSTACLE:
-				break;
-		}
+                        if (fromHex.isValid())
+                        {
+                            targetEntry["attack_from"] = {
+                                {"x", fromHex.getX()},
+                                {"y", fromHex.getY()}
+                            };
+                        }
 
-		arr.push_back(a);
-	}
+                        a["melee_targets"].push_back(targetEntry);
+                    }
+                }
+                break;
+            }
+            case PossiblePlayerBattleAction::SHOOT:
+            {
+                if (stack->canShoot())
+                {
+                    a["ranged_targets"] = nlohmann::json::array();
+                    for (const CStack *target : owner.getBattle()->battleGetAllStacks())
+                    {
+                        if (target != stack && target->alive() && target->unitSide() != stack->unitSide())
+                        {
+                            nlohmann::json targetEntry = {
+                                {"stack_id", target->unitId()},
+                                {"x", target->position.getX()},
+                                {"y", target->position.getY()}
+                            };
+                            a["ranged_targets"].push_back(targetEntry);
+                        }
+                    }
+                }
+                break;
+            }
+            case PossiblePlayerBattleAction::AIMED_SPELL_CREATURE:
+            case PossiblePlayerBattleAction::ANY_LOCATION:
+            case PossiblePlayerBattleAction::NO_LOCATION:
+            case PossiblePlayerBattleAction::FREE_LOCATION:
+            case PossiblePlayerBattleAction::OBSTACLE:
+            case PossiblePlayerBattleAction::TELEPORT:
+            case PossiblePlayerBattleAction::RANDOM_GENIE_SPELL:
+            {
+                a["spell_targeting"] = true;
+                if (action.spell().hasValue())
+                    a["spell_id"] = static_cast<int>(action.spell().toEnum());
 
-	out["possible_actions"] = arr;
+                const CSpell *spellPtr = action.spell().toSpell();
+                a["spell_targets"] = nlohmann::json::array();
+                for (const CStack *target : owner.getBattle()->battleGetAllStacks())
+                {
+                    if (!target->alive()) continue;
+                    if (!spellPtr) continue;
+                    if (!isCastingPossibleHere(spellPtr, target, target->getPosition())) continue;
 
-	// Write it out
-	std::filesystem::create_directories("../../export");
-	std::ofstream file("../../export/stack_" + std::to_string(stack->unitId()) + "_actions.json");
-	file << out.dump(2);
+                    a["spell_targets"].push_back({
+                        {"stack_id", target->unitId()},
+                        {"x", target->position.getX()},
+                        {"y", target->position.getY()}
+                    });
+                }
+                break;
+            }
+            case PossiblePlayerBattleAction::CREATURE_INFO:
+            case PossiblePlayerBattleAction::HERO_INFO:
+            case PossiblePlayerBattleAction::CATAPULT:
+            case PossiblePlayerBattleAction::HEAL:
+            {
+                a["misc"] = true;
+                break;
+            }
+            default:
+                a["note"] = "Unhandled or unknown action type";
+                break;
+        }
+
+        j["actions"].push_back(a);
+    }
+
+    std::ofstream out("../../export/AvailableActions_stack_" + std::to_string(stack->unitId()) + ".json");
+    out << j.dump(4);
+    out.close();
 }
+
 
 void BattleActionsController::activateStack()
 {

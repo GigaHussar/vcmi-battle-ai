@@ -79,6 +79,8 @@ class BattleActionsController
 public:
 	BattleActionsController(BattleInterface & owner);
 
+	void exportPossibleActionsToJson(const CStack *stack, const std::vector<PossiblePlayerBattleAction> &actions);
+
 	/// initialize list of potential actions for new active stack
 	void activateStack();
 
