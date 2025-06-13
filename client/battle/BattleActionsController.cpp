@@ -1047,6 +1047,25 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
     bool isSpellcaster = stack->hasBonusOfType(BonusType::SPELLCASTER) && stack->canCast();
     j["is_spellcaster"] = isSpellcaster;
 
+    // Export known creature spells
+    nlohmann::json creatureSpellsJson = nlohmann::json::array();
+    TConstBonusListPtr bl = stack->getBonusesOfType(BonusType::SPELLCASTER);
+    for (const auto &bonus : *bl)
+    {
+        if (bonus->additionalInfo[0] <= 0 && bonus->subtype.as<SpellID>().hasValue())
+        {
+            const CSpell *s = bonus->subtype.as<SpellID>().toSpell();
+            if (s)
+            {
+                creatureSpellsJson.push_back({
+                    {"spell_id", s->id.getNum()},
+                    {"name", s->getNameTranslated()}
+                });
+            }
+        }
+    }
+    j["creature_spells"] = creatureSpellsJson;
+
     // Determine creature spellcasting targets
     nlohmann::json spellcastTargets = nlohmann::json::array();
 
@@ -1109,9 +1128,6 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
             const CSpell *spellPtr = spell.toSpell();
             if (spellPtr)
             {
-                
-                
-
                 for (const CStack *unit : owner.getBattle()->battleGetAllStacks())
                 {
                     if (!unit->alive()) continue;
