@@ -1448,7 +1448,22 @@ void BattleActionsController::performSocketCommand(const std::string &cmd)
 		BattleAction action = BattleAction::makeDefend(stack);
 		owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
 	}
-// shoot <target_id>: Shoots at the specified target stack
+	// melee <target_hex> <from_hex>: Perform a melee attack
+	else if (cmd.rfind("melee ", 0) == 0)
+	{
+		std::istringstream iss(cmd.substr(6));
+		int targetHexInt, fromHexInt;
+		iss >> targetHexInt >> fromHexInt;
+
+		BattleHex targetHex(targetHexInt);
+		BattleHex fromHex(fromHexInt);
+
+		logGlobal->info("Melee command: stack %d attacks hex %d from hex %d", stack->unitId(), targetHexInt, fromHexInt);
+
+		BattleAction action = BattleAction::makeMeleeAttack(stack, targetHex, fromHex, /*returnAfterAttack*/false);
+		owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+	}
+	// shoot <target_id>: Shoots at the specified target stack
 	else if (cmd.rfind("shoot ", 0) == 0)
 	{
 		int targetId = std::stoi(cmd.substr(6));
