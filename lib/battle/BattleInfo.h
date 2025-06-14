@@ -32,9 +32,6 @@ class DLL_LINKAGE BattleInfo : public CBonusSystemNode, public CBattleInfoCallba
 	BattleSideArray<SideInBattle> sides; //sides[0] - attacker, sides[1] - defender
 	std::unique_ptr<BattleLayout> layout;
 
-	std::string exportFileName;  // persistent JSON export file for this battle
-	void initExportFileName();  // initializes exportFileName
-
 	std::vector<BattleHex> getAttackableTiles(const CStack *stack) const;
 	BattleHexArray getSpellTargetHexes(SpellID spell, const CStack *caster) const;
 	BattleHexArray getMovementRange(const CStack * stack) const;
@@ -45,6 +42,11 @@ class DLL_LINKAGE BattleInfo : public CBonusSystemNode, public CBattleInfoCallba
 	void postDeserialize();
 public:
 	BattleID battleID = BattleID(0);
+
+	std::string exportId;
+	std::string exportFileName;  // persistent JSON export file for this battle
+	void initExportFileName();  // initializes exportFileName
+
 
 	si32 round;
 	si32 activeStack;

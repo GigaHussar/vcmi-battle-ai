@@ -90,20 +90,37 @@ void BattleInfo::initExportFileName()
 	if (!exportFileName.empty())
 		return;
 
-	auto now = std::chrono::system_clock::now();
-	auto t = std::chrono::system_clock::to_time_t(now);
+	using namespace std::chrono;
+
+	// High-precision time
+	auto now = system_clock::now();
+	auto now_ns = time_point_cast<nanoseconds>(now);
+	auto epoch = now_ns.time_since_epoch();
+
+	// Break down time
+	auto seconds_since_epoch = duration_cast<seconds>(epoch);
+	auto ms_part = duration_cast<milliseconds>(epoch - seconds_since_epoch).count();
+	auto ns_part = duration_cast<nanoseconds>(epoch - seconds_since_epoch).count() % 1000000; // Only sub-millisecond part
+
+	auto t = system_clock::to_time_t(now);
 	std::tm tm = *std::localtime(&t);
 
 	std::ostringstream timestampStream;
-	timestampStream << std::put_time(&tm, "%Y%m%d_%H%M");
+	timestampStream << std::put_time(&tm, "%Y%m%d_%H%M%S");
+	timestampStream << "_" << std::setw(3) << std::setfill('0') << ms_part;
+	timestampStream << "_" << std::setw(6) << std::setfill('0') << ns_part;
 
+	// Random ID
 	std::random_device rd;
 	std::mt19937 gen(rd());
-	std::uniform_int_distribution<> dis(1000, 9999);
-	int randomID = dis(gen);
+	std::uniform_int_distribution<> dis(0, 0xFFFFFF);
+	std::ostringstream randomIdStream;
+	randomIdStream << std::hex << std::setw(6) << std::setfill('0') << dis(gen);
 
-	exportFileName = "battle_" + timestampStream.str() + "_" + std::to_string(randomID) + ".json";
+	exportId = timestampStream.str() + "_" + randomIdStream.str();
+	exportFileName = "battle_" + exportId + ".json";
 }
+
 
 
 void BattleInfo::exportBattleStateToJson()
