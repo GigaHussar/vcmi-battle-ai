@@ -79,6 +79,7 @@ class BattleActionsController
 public:
 	BattleActionsController(BattleInterface & owner);
 
+	void performSocketCommand(const std::string &cmd);
 	void exportPossibleActionsToJson(const CStack *stack, const std::vector<PossiblePlayerBattleAction> &actions);
 
 	/// initialize list of potential actions for new active stack
@@ -130,3 +131,5 @@ public:
 	/// resets possible actions to original state
 	void resetCurrentStackPossibleActions();
 };
+
+extern BattleActionsController* GLOBAL_SOCKET_ACTION_CONTROLLER;

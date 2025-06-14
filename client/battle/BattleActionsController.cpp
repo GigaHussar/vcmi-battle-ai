@@ -12,6 +12,7 @@
 
 #include "StdInc.h"
 #include "BattleActionsController.h"
+BattleActionsController* GLOBAL_SOCKET_ACTION_CONTROLLER = nullptr;
 
 #include "BattleWindow.h"
 #include "BattleStacksController.h"
@@ -140,6 +141,7 @@ BattleActionsController::BattleActionsController(BattleInterface & owner):
 	selectedStack(nullptr),
 	heroSpellToCast(nullptr)
 {
+	GLOBAL_SOCKET_ACTION_CONTROLLER = this;
 }
 
 void BattleActionsController::endCastingSpell()
@@ -1393,4 +1395,86 @@ void BattleActionsController::pushFrontPossibleAction(PossiblePlayerBattleAction
 void BattleActionsController::resetCurrentStackPossibleActions()
 {
 	possibleActions = getPossibleActionsForStack(owner.stacksController->getActiveStack());
+}
+
+// This function handles socket commands to control battle actions for the active stack.
+// Available commands:
+// - "move <hex>": Move to the specified hex tile.
+// - "melee <target_hex> <from_hex>": Perform a melee attack on target_hex from from_hex.
+// - "heal <target_id>": Heal the stack with the specified ID.
+// - "shoot <target_id>": Shoot at the stack with the specified ID. (battle id like 0 or 1 or 2)
+// - "cast <target_id> <spell_id>": Cast a creature spell at the specified target ID with the given spell ID.
+// - "wait": Perform a wait action.
+// - "defend": Perform a defend action.
+// - "endtactic <side>": Ends the tactic phase for the given side (0 for attacker, 1 for defender).
+// - "surrender <side>": Makes the specified side surrender (0 for attacker, 1 for defender).
+// - "retreat <side>": Makes the specified side retreat (0 for attacker, 1 for defender).
+
+void BattleActionsController::performSocketCommand(const std::string &cmd)
+{
+	const CStack* stack = owner.stacksController->getActiveStack();
+	if (!stack)
+	{
+		logGlobal->warn("No active stack available.");
+		return;
+	}
+
+	// move <hex>: Moves the active stack to the specified hex tile
+	if (cmd.rfind("move ", 0) == 0)
+	{
+		std::string hexStr = cmd.substr(5);
+		int hex = std::stoi(hexStr);
+
+		logGlobal->info("Move command: stack %d -> hex %d", stack->unitId(), hex);
+
+		BattleHex dest(hex);
+		BattleAction action = BattleAction::makeMove(stack, dest);
+
+		owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+	}
+	// wait: Makes the active stack wait
+	else if (cmd == "wait")
+	{
+		logGlobal->info("Wait command: stack %d waits", stack->unitId());
+
+		BattleAction action = BattleAction::makeWait(stack);
+		owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+	}
+	// defend: Makes the active stack defend
+	else if (cmd == "defend")
+	{
+		logGlobal->info("Defend command: stack %d defends", stack->unitId());
+
+		BattleAction action = BattleAction::makeDefend(stack);
+		owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+	}
+// shoot <target_id>: Shoots at the specified target stack
+	else if (cmd.rfind("shoot ", 0) == 0)
+	{
+		int targetId = std::stoi(cmd.substr(6));
+
+		const CStack* target = nullptr;
+		for (const auto& s : owner.getBattle()->battleGetAllStacks())
+		{
+			if (s->unitId() == targetId)
+			{
+				target = s;
+				break;
+			}
+		}
+
+		if (target)
+		{
+			logGlobal->info("Shoot command: stack %d shoots at stack %d", stack->unitId(), target->unitId());
+			BattleAction action = BattleAction::makeShotAttack(stack, target);
+			owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+		}
+		else
+		{
+			logGlobal->warn("Shoot target with ID %d not found", targetId);
+		}
+	}	else
+	{
+		logGlobal->warn("Unknown command: %s", cmd.c_str());
+	}
 }
