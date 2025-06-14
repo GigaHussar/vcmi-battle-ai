@@ -12,6 +12,7 @@
 
 #include "StdInc.h"
 #include "BattleActionsController.h"
+BattleActionsController* GLOBAL_SOCKET_ACTION_CONTROLLER = nullptr;
 
 #include "BattleWindow.h"
 #include "BattleStacksController.h"
@@ -140,6 +141,7 @@ BattleActionsController::BattleActionsController(BattleInterface & owner):
 	selectedStack(nullptr),
 	heroSpellToCast(nullptr)
 {
+	GLOBAL_SOCKET_ACTION_CONTROLLER = this;
 }
 
 void BattleActionsController::endCastingSpell()
@@ -1385,4 +1387,31 @@ void BattleActionsController::pushFrontPossibleAction(PossiblePlayerBattleAction
 void BattleActionsController::resetCurrentStackPossibleActions()
 {
 	possibleActions = getPossibleActionsForStack(owner.stacksController->getActiveStack());
+}
+
+void BattleActionsController::performSocketCommand(const std::string &cmd)
+{
+	const CStack* stack = owner.stacksController->getActiveStack();
+	if (!stack)
+	{
+		logGlobal->warn("⚠️ No active stack available.");
+		return;
+	}
+
+	if (cmd.rfind("move ", 0) == 0)
+	{
+		std::string hexStr = cmd.substr(5);
+		int hex = std::stoi(hexStr);
+
+		logGlobal->info("🧭 Move command: stack %d → hex %d", stack->unitId(), hex);
+
+		BattleHex dest(hex);
+		BattleAction action = BattleAction::makeMove(stack, dest);
+
+		owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+	}
+	else
+	{
+		logGlobal->warn("❓ Unknown command: %s", cmd.c_str());
+	}
 }
