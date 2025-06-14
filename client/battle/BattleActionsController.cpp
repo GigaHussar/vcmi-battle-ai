@@ -1394,7 +1394,7 @@ void BattleActionsController::resetCurrentStackPossibleActions()
 // - "move <hex>": Move to the specified hex tile.
 // - "melee <target_hex> <from_hex>": Perform a melee attack on target_hex from from_hex.
 // - "heal <target_id>": Heal the stack with the specified ID.
-// - "shoot <target_id>": Shoot at the stack with the specified ID.
+// - "shoot <target_id>": Shoot at the stack with the specified ID. (battle id like 0 or 1 or 2)
 // - "cast <target_id> <spell_id>": Cast a creature spell at the specified target ID with the given spell ID.
 // - "wait": Perform a wait action.
 // - "defend": Perform a defend action.
@@ -1440,8 +1440,32 @@ void BattleActionsController::performSocketCommand(const std::string &cmd)
 		BattleAction action = BattleAction::makeDefend(stack);
 		owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
 	}
-	// unknown command
-	else
+// shoot <target_id>: Shoots at the specified target stack
+	else if (cmd.rfind("shoot ", 0) == 0)
+	{
+		int targetId = std::stoi(cmd.substr(6));
+
+		const CStack* target = nullptr;
+		for (const auto& s : owner.getBattle()->battleGetAllStacks())
+		{
+			if (s->unitId() == targetId)
+			{
+				target = s;
+				break;
+			}
+		}
+
+		if (target)
+		{
+			logGlobal->info("Shoot command: stack %d shoots at stack %d", stack->unitId(), target->unitId());
+			BattleAction action = BattleAction::makeShotAttack(stack, target);
+			owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+		}
+		else
+		{
+			logGlobal->warn("Shoot target with ID %d not found", targetId);
+		}
+	}	else
 	{
 		logGlobal->warn("Unknown command: %s", cmd.c_str());
 	}
