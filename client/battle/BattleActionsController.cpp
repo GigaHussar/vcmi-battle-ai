@@ -1039,7 +1039,8 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
     const BattleHex &pos = stack->position;
     j["origin"] = {
         {"x", pos.getX()},
-        {"y", pos.getY()}
+        {"y", pos.getY()},
+        {"hex", pos.toInt()}
     };
     j["actions"] = nlohmann::json::array();
 
@@ -1099,7 +1100,8 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
                     spellcastTargets.push_back({
                         {"stack_id", unit->unitId()},
                         {"x", unit->position.getX()},
-                        {"y", unit->position.getY()}
+                        {"y", unit->position.getY()},
+						{"hex", unit->position.toInt()}
                     });
                 }
                 break;
@@ -1139,7 +1141,8 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
                     spellJson["targets"].push_back({
                         {"stack_id", unit->unitId()},
                         {"x", unit->position.getX()},
-                        {"y", unit->position.getY()}
+                        {"y", unit->position.getY()},
+						{"hex", unit->position.toInt()}
                     });
                 }
             }
@@ -1170,7 +1173,8 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
                 {
                     a["reachable_tiles"].push_back({
                         {"x", hex.getX()},
-                        {"y", hex.getY()}
+                        {"y", hex.getY()},
+                        {"hex", hex.toInt()}
                     });
                 }
                 break;
@@ -1191,14 +1195,16 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
                         nlohmann::json targetEntry = {
                             {"stack_id", target->unitId()},
                             {"x", target->position.getX()},
-                            {"y", target->position.getY()}
+                            {"y", target->position.getY()},
+                            {"hex", target->position.toInt()}
                         };
 
                         if (fromHex.isValid())
                         {
                             targetEntry["attack_from"] = {
                                 {"x", fromHex.getX()},
-                                {"y", fromHex.getY()}
+                                {"y", fromHex.getY()},
+                                {"hex", fromHex.toInt()}
                             };
                         }
 
@@ -1219,7 +1225,8 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
                             nlohmann::json targetEntry = {
                                 {"stack_id", target->unitId()},
                                 {"x", target->position.getX()},
-                                {"y", target->position.getY()}
+                                {"y", target->position.getY()},
+								{"hex", target->position.toInt()}
                             };
                             a["ranged_targets"].push_back(targetEntry);
                         }
@@ -1250,7 +1257,8 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
                     a["spell_targets"].push_back({
                         {"stack_id", target->unitId()},
                         {"x", target->position.getX()},
-                        {"y", target->position.getY()}
+                        {"y", target->position.getY()},
+						{"hex", target->position.toInt()}
                     });
                 }
                 break;
