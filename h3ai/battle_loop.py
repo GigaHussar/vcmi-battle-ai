@@ -6,6 +6,7 @@ import csv
 import random
 from pathlib import Path
 from predictor import predict_best_action_type
+from battle_state_encoder import encode_battle_state
 
 
 # === CONFIGURATION ===
@@ -117,6 +118,30 @@ def log_battle_result(game_id, reward, atk_start, atk_end, def_end):
             writer.writerow(["game_id", "reward", "attacker_start", "attacker_end", "defender_end"])
         writer.writerow([game_id, reward, atk_start, atk_end, def_end])
 
+def log_training_example(game_id, state_vector, action_type):
+    """
+    Appends a training sample to logs/training_data.csv:
+    - game_id: unique battle identifier
+    - state_vector: encoded state from battle_state_encoder
+    - action_type: string like "move", "melee", etc.
+    """
+    log_file = Path("/Users/syntaxerror/vcmi/export/training_data.csv")
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    file_exists = log_file.exists()
+
+    # Convert action name to numeric index
+    action_map = {"move": 0, "melee": 1, "shoot": 2, "wait": 3, "defend": 4}
+    action_index = action_map.get(action_type, -1)
+
+    with open(log_file, "a", newline="") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            header = ["game_id"] + [f"f{i}" for i in range(len(state_vector))] + ["action"]
+            writer.writerow(header)
+        row = [game_id] + list(state_vector) + [action_index]
+        writer.writerow(row)
+
+
 def battle_loop():
     print("🧠 Agent started. Waiting for battle to begin...")
     last_turn = -1
@@ -144,6 +169,11 @@ def battle_loop():
             initial_attacker_strength, initial_defender_strength = get_army_strengths(state)
 
         predicted_type = predict_best_action_type()
+
+        # Encode current state
+        state_vector = encode_battle_state(state)
+        log_training_example(game_id, state_vector, predicted_type)
+
         command = choose_first_valid_command_of_type(predicted_type, actions_data)
 
         if command:
