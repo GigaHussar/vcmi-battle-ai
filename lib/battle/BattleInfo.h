@@ -38,7 +38,7 @@ class DLL_LINKAGE BattleInfo : public CBonusSystemNode, public CBattleInfoCallba
 
 
 	void exportBattleStateToJson();
-	
+	void exportPossibleActionsToJson(const CStack *stack, const std::vector<PossiblePlayerBattleAction> &actions, PlayerColor currentPlayer);
 	void postDeserialize();
 public:
 	BattleID battleID = BattleID(0);
@@ -46,6 +46,9 @@ public:
 	std::string exportId;
 	std::string exportFileName;  // persistent JSON export file for this battle
 	void initExportFileName();  // initializes exportFileName
+	bool isCastingPossibleHere(const CSpell *spell, const CStack *target, const BattleHex &pos) const;
+	BattleHex getAttackFromHex(const CStack *attacker, const CStack *target) const;
+
 
 
 	si32 round;

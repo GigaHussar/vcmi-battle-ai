@@ -9,9 +9,13 @@
  */
 #include <fstream>
 #include "../../external/json/json.hpp"
-	
+
+#include "spells/ISpellMechanics.h"
+#include "spells/CSpellHandler.h"
+#include "spells/Problem.h"
 #include "PossiblePlayerBattleAction.h"
 #include "CStack.h"
+#include "BattleHex.h"
 #include "spells/CSpellHandler.h"
 #include "entities/hero/CHeroHandler.h"
 #include "BattleUnitTurnReason.h"
@@ -415,6 +419,323 @@ void BattleInfo::exportBattleStateToJson()
 	outFile << turnData.dump(2);
 }
 
+bool BattleInfo::isCastingPossibleHere(const CSpell *spell, const CStack *target, const BattleHex &pos) const
+{
+	if (!spell || !target)
+		return false;
+
+	spells::Target tgt;
+	tgt.emplace_back();
+
+	spells::BattleCast cast(this, target, spells::Mode::HERO, spell);
+	auto mechanics = spell->battleMechanics(&cast);
+	spells::detail::ProblemImpl ignored;
+	return mechanics->canBeCastAt(tgt, ignored);
+}
+
+BattleHex BattleInfo::getAttackFromHex(const CStack *attacker, const CStack *target) const
+{
+	for (const BattleHex &hex : target->getPosition().getNeighbouringTiles())
+	{
+		if (!hex.isValid())
+			continue;
+
+		if (this->battleCanAttack(attacker, target, hex))
+			return hex;
+	}
+	return BattleHex::INVALID;
+}
+
+
+void BattleInfo::exportPossibleActionsToJson(const CStack *stack, const std::vector<PossiblePlayerBattleAction> &actions, PlayerColor currentPlayer)
+{	
+	this->initExportFileName();
+	// Set up log file path
+	const std::filesystem::path logDir = "../../export";
+	if (!std::filesystem::exists(logDir))
+		std::filesystem::create_directories(logDir);
+
+	const std::string logFilePath = (logDir / exportFileName).string();
+
+	// Static turn counter, incremented only when this function is executed
+	static int turnCounter = 0;
+
+	// Prepare the data for this stack for this turn
+	nlohmann::json j;
+	j["stack_id"] = stack->unitId();
+	const BattleHex &pos = stack->position;
+	j["origin"] = {
+		{"x", pos.getX()},
+		{"y", pos.getY()},
+		{"hex", pos.toInt()}
+	};
+	j["actions"] = nlohmann::json::array();
+
+	// Add spellcaster flag
+	bool isSpellcaster = stack->hasBonusOfType(BonusType::SPELLCASTER) && stack->canCast();
+	j["is_spellcaster"] = isSpellcaster;
+
+	// Export known creature spells
+	nlohmann::json creatureSpellsJson = nlohmann::json::array();
+	TConstBonusListPtr bl = stack->getBonusesOfType(BonusType::SPELLCASTER);
+	for (const auto &bonus : *bl)
+	{
+		if (bonus->additionalInfo[0] <= 0 && bonus->subtype.as<SpellID>().hasValue())
+		{
+			const CSpell *s = bonus->subtype.as<SpellID>().toSpell();
+			if (s)
+			{
+				creatureSpellsJson.push_back({
+					{"spell_id", s->id.getNum()},
+					{"name", s->getNameTranslated()}
+				});
+			}
+		}
+	}
+	j["creature_spells"] = creatureSpellsJson;
+
+	// Determine creature spellcasting targets
+	nlohmann::json spellcastTargets = nlohmann::json::array();
+
+	if (isSpellcaster)
+	{
+		for (const auto &action : actions)
+		{
+			if (action.get() != PossiblePlayerBattleAction::NO_LOCATION)
+				continue;
+
+			const spells::Caster *caster = stack;
+			const CSpell *spell = action.spell().toSpell();
+			if (!spell)
+				continue;
+
+			spells::Target target;
+			target.emplace_back();
+			spells::BattleCast cast(this, caster, spells::Mode::CREATURE_ACTIVE, spell);
+			auto m = spell->battleMechanics(&cast);
+			spells::detail::ProblemImpl ignored;
+
+			if (m->canBeCastAt(target, ignored))
+			{
+				for (const CStack *unit : this->battleGetAllStacks())
+				{
+					if (!unit->alive())
+						continue;
+					if (!isCastingPossibleHere(spell, unit, unit->getPosition()))
+						continue;
+
+					spellcastTargets.push_back({
+						{"stack_id", unit->unitId()},
+						{"x", unit->position.getX()},
+						{"y", unit->position.getY()},
+						{"hex", unit->position.toInt()}
+					});
+				}
+				break;
+			}
+		}
+	}
+	j["creature_spellcast_possible"] = !spellcastTargets.empty();
+	j["creature_spellcast_targets"] = spellcastTargets;
+
+	const CGHeroInstance *attHero = getSideHero(BattleSide::ATTACKER);
+	const CGHeroInstance *defHero = getSideHero(BattleSide::DEFENDER);
+
+	const CGHeroInstance *castingHero =
+		(attHero && attHero->tempOwner == currentPlayer)
+			? attHero
+			: defHero;
+
+
+	if (castingHero && castingHero->hasSpellbook())
+	{
+		j["hero_spellcasting_available"] = true;
+		j["hero_can_still_cast_this_round"] = this->battleCanCastSpell(castingHero, spells::Mode::HERO) == ESpellCastProblem::OK;
+
+		nlohmann::json heroSpells = nlohmann::json::array();
+		for (const auto &spell : castingHero->getSpellsInSpellbook())
+		{
+			nlohmann::json spellJson;
+			spellJson["spell_id"] = spell.getNum();
+			spellJson["targets"] = nlohmann::json::array();
+
+			const CSpell *spellPtr = spell.toSpell();
+			if (spellPtr)
+			{   
+				spellJson["can_cast_now"] = spellPtr->canBeCast(this, spells::Mode::HERO, castingHero);
+
+				for (const CStack *unit : this->battleGetAllStacks())
+				{
+					if (!unit->alive()) continue;
+					if (!isCastingPossibleHere(spellPtr, unit, unit->getPosition())) continue;
+
+					spellJson["targets"].push_back({
+						{"stack_id", unit->unitId()},
+						{"x", unit->position.getX()},
+						{"y", unit->position.getY()},
+						{"hex", unit->position.toInt()}
+					});
+				}
+			}
+			heroSpells.push_back(spellJson);
+		}
+		j["hero_spells"] = heroSpells;
+	}
+	else
+	{
+		j["hero_spellcasting_available"] = false;
+		j["hero_spells"] = nlohmann::json::array();
+	}
+
+	for (const auto &action : actions)
+	{
+		nlohmann::json a;
+		a["type"] = static_cast<int>(action.get());
+
+		switch (action.get())
+		{
+			case PossiblePlayerBattleAction::MOVE_STACK:
+			{
+				a["reachable_tiles"] = nlohmann::json::array();
+				BattleHexArray reachable = this->battleGetAvailableHexes(stack, false);
+				for (const BattleHex &hex : reachable)
+				{
+					a["reachable_tiles"].push_back({
+						{"x", hex.getX()},
+						{"y", hex.getY()},
+						{"hex", hex.toInt()}
+					});
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::ATTACK:
+			case PossiblePlayerBattleAction::ATTACK_AND_RETURN:
+			case PossiblePlayerBattleAction::WALK_AND_ATTACK:
+			{
+				a["melee_targets"] = nlohmann::json::array();
+				for (const CStack *target : this->battleGetAllStacks())
+				{
+					if (target != stack && target->alive() && target->unitSide() != stack->unitSide())
+					{
+						BattleHex fromHex = getAttackFromHex(stack, target);
+
+						nlohmann::json targetEntry = {
+							{"stack_id", target->unitId()},
+							{"x", target->position.getX()},
+							{"y", target->position.getY()},
+							{"hex", target->position.toInt()}
+						};
+
+						if (fromHex.isValid())
+						{
+							targetEntry["attack_from"] = {
+								{"x", fromHex.getX()},
+								{"y", fromHex.getY()},
+								{"hex", fromHex.toInt()}
+							};
+						}
+
+						// Add can_melee_attack field
+						bool canMeleeAttack = false;
+						if (fromHex.isValid() && fromHex.toInt() != target->position.toInt())
+							canMeleeAttack = true;
+						targetEntry["can_melee_attack"] = canMeleeAttack;
+
+						a["melee_targets"].push_back(targetEntry);
+					}
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::SHOOT:
+			{
+				if (stack->canShoot())
+				{
+					a["ranged_targets"] = nlohmann::json::array();
+					for (const CStack *target : this->battleGetAllStacks())
+					{
+						if (target != stack && target->alive() && target->unitSide() != stack->unitSide())
+						{
+							nlohmann::json targetEntry = {
+								{"stack_id", target->unitId()},
+								{"x", target->position.getX()},
+								{"y", target->position.getY()},
+								{"hex", target->position.toInt()}
+							};
+							a["ranged_targets"].push_back(targetEntry);
+						}
+					}
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::AIMED_SPELL_CREATURE:
+			case PossiblePlayerBattleAction::ANY_LOCATION:
+			case PossiblePlayerBattleAction::NO_LOCATION:
+			case PossiblePlayerBattleAction::FREE_LOCATION:
+			case PossiblePlayerBattleAction::OBSTACLE:
+			case PossiblePlayerBattleAction::TELEPORT:
+			case PossiblePlayerBattleAction::RANDOM_GENIE_SPELL:
+			{
+				a["spell_targeting"] = true;
+				if (action.spell().hasValue())
+					a["spell_id"] = static_cast<int>(action.spell().toEnum());
+
+				const CSpell *spellPtr = action.spell().toSpell();
+				a["spell_targets"] = nlohmann::json::array();
+				for (const CStack *target : this->battleGetAllStacks())
+				{
+					if (!target->alive()) continue;
+					if (!spellPtr) continue;
+					if (!isCastingPossibleHere(spellPtr, target, target->getPosition())) continue;
+
+					a["spell_targets"].push_back({
+						{"stack_id", target->unitId()},
+						{"x", target->position.getX()},
+						{"y", target->position.getY()},
+						{"hex", target->position.toInt()}
+					});
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::CREATURE_INFO:
+			case PossiblePlayerBattleAction::HERO_INFO:
+			case PossiblePlayerBattleAction::CATAPULT:
+			case PossiblePlayerBattleAction::HEAL:
+			{
+				a["misc"] = true;
+				break;
+			}
+			default:
+				a["note"] = "Unhandled or unknown action type";
+				break;
+		}
+
+		j["actions"].push_back(a);
+	}
+
+	// Add turn number
+	j["turn"] = turnCounter;
+
+	// Increment turn counter only when this function is executed
+	++turnCounter;
+
+	// Read the existing file if present
+	std::ifstream inFile(logFilePath);
+	nlohmann::json log = nlohmann::json::array();
+	if (inFile.good())
+	{
+		try { inFile >> log; }
+		catch (...) { log = nlohmann::json::array(); }
+	}
+	inFile.close();
+
+	// Append this turn's actions
+	log.push_back(j);
+
+	// Write entire array back to disk
+	std::ofstream outFile(logFilePath, std::ios::trunc);
+	outFile << log.dump(2); // pretty format
+	outFile.close();
+}
 
 
 
@@ -1074,6 +1395,12 @@ void BattleInfo::nextTurn(uint32_t unitId, BattleUnitTurnReason reason)
 
 	// Call export function
 	exportBattleStateToJson();
+
+	BattleClientInterfaceData data;
+	std::vector<PossiblePlayerBattleAction> actions = getClientActionsForStack(st, data);
+	PlayerColor currentPlayer = getSidePlayer(st->unitSide());
+
+	exportPossibleActionsToJson(st, actions, currentPlayer);
 }
 
 
