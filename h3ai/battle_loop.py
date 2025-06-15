@@ -143,8 +143,8 @@ def battle_loop():
         if initial_attacker_strength is None:
             initial_attacker_strength, initial_defender_strength = get_army_strengths(state)
 
-        valid_commands = extract_valid_commands(actions_data)
-        command = choose_random_action(valid_commands)
+        predicted_type = predict_best_action_type()
+        command = choose_first_valid_command_of_type(predicted_type, actions_data)
 
         if command:
             print(f"👉 Turn {current_turn}: sending command: {command}")
