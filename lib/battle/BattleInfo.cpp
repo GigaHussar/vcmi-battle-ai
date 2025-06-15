@@ -136,6 +136,24 @@ void BattleInfo::exportBattleStateToJson()
 	json turnData;
 	turnData["_turn"] = turnCounter++;
 
+	auto computeLiveArmyStrength = [this](BattleSide side) -> uint64_t {
+		uint64_t total = 0;
+		for (const auto &stack : stacks)
+		{
+			if (stack->unitSide() == side && !stack->isDead())
+			{
+				const auto *cre = stack->unitType();
+				int count = stack->getCount();
+				if (cre)
+					total += static_cast<uint64_t>(cre->getAIValue()) * count;
+			}
+		}
+		return total;
+	};
+
+	turnData["army_strength_attacker"] = computeLiveArmyStrength(BattleSide::ATTACKER);
+	turnData["army_strength_defender"] = computeLiveArmyStrength(BattleSide::DEFENDER);
+
 	initExportFileName();
 	// Set up log file path
 	const std::filesystem::path logDir = "../../export";
