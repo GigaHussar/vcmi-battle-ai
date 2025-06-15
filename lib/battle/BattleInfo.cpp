@@ -131,6 +131,21 @@ void BattleInfo::exportBattleStateToJson()
 	exportToggle = !exportToggle;
 	if (!exportToggle)
 		return;
+	
+	// Make sure initExportFileName() is called first
+	initExportFileName(); // in case it's not yet generated
+
+	// Folder: export/battle_<exportId>/TurnN/
+	std::filesystem::path baseDir = "../../export/battle_" + exportId;
+	std::filesystem::path turnDir = baseDir / ("Turn" + std::to_string(turnCounter));
+
+	// Ensure the directory exists
+	if (!std::filesystem::exists(turnDir))
+		std::filesystem::create_directories(turnDir);
+
+	// File path: TurnN.json
+	std::filesystem::path logFilePath = turnDir / ("Turn" + std::to_string(turnCounter) + ".json");
+
 
 	using json = nlohmann::json;
 	json turnData;
@@ -153,14 +168,6 @@ void BattleInfo::exportBattleStateToJson()
 
 	turnData["army_strength_attacker"] = computeLiveArmyStrength(BattleSide::ATTACKER);
 	turnData["army_strength_defender"] = computeLiveArmyStrength(BattleSide::DEFENDER);
-
-	initExportFileName();
-	// Set up log file path
-	const std::filesystem::path logDir = "../../export";
-	if (!std::filesystem::exists(logDir))
-		std::filesystem::create_directories(logDir);
-		
-	const std::string logFilePath = (logDir / exportFileName).string();
 
 	// Basic tactical info
 	turnData["tactic_distance"] = tacticDistance;
@@ -385,18 +392,9 @@ void BattleInfo::exportBattleStateToJson()
 	turnData["wall_state"] = wallStatesJson;
 	turnData["gate_state"] = static_cast<int>(getGateState());
 
-	// Write to file
-	std::ifstream inFile(logFilePath);
-	json log = json::array();
-	if (inFile.good()) {
-		try { inFile >> log; } catch (...) { log = json::array(); }
-	}
-	inFile.close();
-
-	log.push_back(turnData);
-
+	// Write a single JSON object (turnData) to the file
 	std::ofstream outFile(logFilePath, std::ios::trunc);
-	outFile << log.dump(2);
+	outFile << turnData.dump(2);
 }
 
 
