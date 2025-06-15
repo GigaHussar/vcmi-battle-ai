@@ -1070,13 +1070,12 @@ void BattleActionsController::generateClientExportFileName()
 
 void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, const std::vector<PossiblePlayerBattleAction> &actions)
 {	
-	generateClientExportFileName();
+	//generateClientExportFileName();
 	// Set up log file path
-	const std::filesystem::path logDir = "../../export";
-	if (!std::filesystem::exists(logDir))
-		std::filesystem::create_directories(logDir);
+	std::filesystem::path exportPath = "../../export";
+	std::filesystem::create_directories(exportPath);
+	std::filesystem::path logFilePath = exportPath / "possible_actions.json";
 
-	const std::string logFilePath = (logDir / exportFileNameAction).string();
 
 	// Static turn counter, incremented only when this function is executed
 	static int turnCounter = 0;
@@ -1337,22 +1336,8 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
 	// Increment turn counter only when this function is executed
 	++turnCounter;
 
-	// Read the existing file if present
-	std::ifstream inFile(logFilePath);
-	nlohmann::json log = nlohmann::json::array();
-	if (inFile.good())
-	{
-		try { inFile >> log; }
-		catch (...) { log = nlohmann::json::array(); }
-	}
-	inFile.close();
-
-	// Append this turn's actions
-	log.push_back(j);
-
-	// Write entire array back to disk
 	std::ofstream outFile(logFilePath, std::ios::trunc);
-	outFile << log.dump(2); // pretty format
+	outFile << j.dump(2); // pretty format
 	outFile.close();
 }
 
