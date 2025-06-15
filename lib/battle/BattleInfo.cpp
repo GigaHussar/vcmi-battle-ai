@@ -127,6 +127,9 @@ void BattleInfo::exportBattleStateToJson()
 {
 	static bool exportToggle = false;
 	static int turnCounter = 0;
+	int attackerTurn = 0;
+	int defenderTurn = 0;
+	std::string currentTurnSide = "unknown";
 
 	exportToggle = !exportToggle;
 	if (!exportToggle)
@@ -252,7 +255,20 @@ void BattleInfo::exportBattleStateToJson()
 	
 	json allStacksJson = json::array();
 	for (const auto &stack : stacks)
-	{
+	{	
+		if (!stack->isDead() && stack->unitId() == activeStack)
+    	{
+			if (stack->unitSide() == BattleSide::ATTACKER)
+			{
+				attackerTurn++;
+				currentTurnSide = "attacker";
+			}
+			else if (stack->unitSide() == BattleSide::DEFENDER)
+			{
+				defenderTurn++;
+				currentTurnSide = "defender";
+			}
+		}
 		const auto *type = stack->unitType();
 		json unitJson;
 
@@ -336,8 +352,10 @@ void BattleInfo::exportBattleStateToJson()
 		allStacksJson.push_back(unitJson);
 	}
 	turnData["all_units"] = allStacksJson;
-
-
+	
+	turnData["turn_attacker"] = attackerTurn;
+	turnData["turn_defender"] = defenderTurn;
+	turnData["current_turn_side"] = currentTurnSide;
 
 	// Side data
 	for (BattleSide side : {BattleSide::ATTACKER, BattleSide::DEFENDER})
