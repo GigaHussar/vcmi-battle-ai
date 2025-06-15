@@ -140,18 +140,12 @@ void BattleInfo::exportBattleStateToJson()
 		return;
 	
 	// Make sure initExportFileName() is called first
-	initExportFileName(); // in case it's not yet generated
+	//initExportFileName(); // in case it's not yet generated
 
-	// Folder: export/battle_<exportId>/TurnN/
-	std::filesystem::path baseDir = "../../export/battle_" + exportId;
-	std::filesystem::path turnDir = baseDir / ("Turn" + std::to_string(turnCounter));
+	std::filesystem::path exportPath = "../../export";
+	std::filesystem::create_directories(exportPath);
+	std::filesystem::path logFilePath = exportPath / "battle.json";
 
-	// Ensure the directory exists
-	if (!std::filesystem::exists(turnDir))
-		std::filesystem::create_directories(turnDir);
-
-	// File path: TurnN.json
-	std::filesystem::path logFilePath = turnDir / ("Turn" + std::to_string(turnCounter) + ".json");
 
 
 	using json = nlohmann::json;
@@ -597,7 +591,7 @@ void BattleInfo::exportPossibleActionsToJson(const CStack *stack, const std::vec
 			case PossiblePlayerBattleAction::MOVE_STACK:
 			{
 				a["reachable_tiles"] = nlohmann::json::array();
-				BattleHexArray reachable = this->battleGetAvailableHexes(stack, false);
+				BattleHexArray reachable = battleGetAvailableHexes(stack, false);
 				for (const BattleHex &hex : reachable)
 				{
 					a["reachable_tiles"].push_back({
@@ -613,12 +607,12 @@ void BattleInfo::exportPossibleActionsToJson(const CStack *stack, const std::vec
 			case PossiblePlayerBattleAction::WALK_AND_ATTACK:
 			{
 				a["melee_targets"] = nlohmann::json::array();
-				for (const CStack *target : this->battleGetAllStacks())
+				for (const auto &targetPtr : stacks)
 				{
+					const CStack *target = targetPtr.get();
 					if (target != stack && target->alive() && target->unitSide() != stack->unitSide())
 					{
 						BattleHex fromHex = getAttackFromHex(stack, target);
-
 						nlohmann::json targetEntry = {
 							{"stack_id", target->unitId()},
 							{"x", target->position.getX()},
@@ -635,10 +629,7 @@ void BattleInfo::exportPossibleActionsToJson(const CStack *stack, const std::vec
 							};
 						}
 
-						// Add can_melee_attack field
-						bool canMeleeAttack = false;
-						if (fromHex.isValid() && fromHex.toInt() != target->position.toInt())
-							canMeleeAttack = true;
+						bool canMeleeAttack = fromHex.isValid() && fromHex.toInt() != target->position.toInt();
 						targetEntry["can_melee_attack"] = canMeleeAttack;
 
 						a["melee_targets"].push_back(targetEntry);
@@ -651,17 +642,17 @@ void BattleInfo::exportPossibleActionsToJson(const CStack *stack, const std::vec
 				if (stack->canShoot())
 				{
 					a["ranged_targets"] = nlohmann::json::array();
-					for (const CStack *target : this->battleGetAllStacks())
+					for (const auto &targetPtr : stacks)
 					{
+						const CStack *target = targetPtr.get();
 						if (target != stack && target->alive() && target->unitSide() != stack->unitSide())
 						{
-							nlohmann::json targetEntry = {
+							a["ranged_targets"].push_back({
 								{"stack_id", target->unitId()},
 								{"x", target->position.getX()},
 								{"y", target->position.getY()},
 								{"hex", target->position.toInt()}
-							};
-							a["ranged_targets"].push_back(targetEntry);
+							});
 						}
 					}
 				}
@@ -681,11 +672,14 @@ void BattleInfo::exportPossibleActionsToJson(const CStack *stack, const std::vec
 
 				const CSpell *spellPtr = action.spell().toSpell();
 				a["spell_targets"] = nlohmann::json::array();
-				for (const CStack *target : this->battleGetAllStacks())
+				for (const auto &targetPtr : stacks)
 				{
-					if (!target->alive()) continue;
-					if (!spellPtr) continue;
-					if (!isCastingPossibleHere(spellPtr, target, target->getPosition())) continue;
+					const CStack *target = targetPtr.get();
+					if (!target->alive() || !spellPtr)
+						continue;
+
+					if (!isCastingPossibleHere(spellPtr, target, target->position))
+						continue;
 
 					a["spell_targets"].push_back({
 						{"stack_id", target->unitId()},
@@ -708,6 +702,7 @@ void BattleInfo::exportPossibleActionsToJson(const CStack *stack, const std::vec
 				a["note"] = "Unhandled or unknown action type";
 				break;
 		}
+
 
 		j["actions"].push_back(a);
 	}
@@ -1395,12 +1390,6 @@ void BattleInfo::nextTurn(uint32_t unitId, BattleUnitTurnReason reason)
 
 	// Call export function
 	exportBattleStateToJson();
-
-	BattleClientInterfaceData data;
-	std::vector<PossiblePlayerBattleAction> actions = getClientActionsForStack(st, data);
-	PlayerColor currentPlayer = getSidePlayer(st->unitSide());
-
-	exportPossibleActionsToJson(st, actions, currentPlayer);
 }
 
 
