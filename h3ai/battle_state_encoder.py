@@ -51,6 +51,12 @@ def encode_battle_state(state_json):
     features.append(atk_alive / 20.0)
     features.append(def_alive / 20.0)
 
+    # ✅ FINAL FIX: Enforce exactly 18 features
+    if len(features) > 18:
+        features = features[:18]
+    elif len(features) < 18:
+        features += [0.0] * (18 - len(features))
+
     return np.array(features, dtype=np.float32)
 
 # === TEST ENCODER ===

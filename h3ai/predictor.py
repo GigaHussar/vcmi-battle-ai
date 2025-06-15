@@ -3,78 +3,46 @@ import numpy as np
 import json
 from pathlib import Path
 from battle_state_encoder import encode_battle_state
-from model import BattlePolicyNet
+from model import BattleCommandScorer
+from predictor_helpers import extract_all_possible_commands  # assuming moved to predictor_helpers.py
 
 # === CONFIGURATION ===
 STATE_FILE = Path("/Users/syntaxerror/vcmi/export/battle.json")
 ACTIONS_FILE = Path("/Users/syntaxerror/vcmi/export/possible_actions.json")
-ACTION_TYPE_MAP = {
-    4: "move",
-    5: "melee",
-    6: "melee",
-#    2: "shoot",  # placeholder if needed later
-    1: "wait",
-    0: "defend"
-}
-ACTION_INDEX_MAP = {
-    "move": 0,
-    "melee": 1,
-#    "shoot": 2,
-    "wait": 3,
-    "defend": 4
-}
-REVERSE_ACTION_INDEX = {v: k for k, v in ACTION_INDEX_MAP.items()}
+MODEL_WEIGHTS = "model_weights.pth"
 
-# === PREDICTION FUNCTION ===
-
-def predict_best_action_type():
+def predict_best_command():
     try:
-        # Load and encode state
         with open(STATE_FILE) as f:
             state_json = json.load(f)
         features = encode_battle_state(state_json)
-        input_tensor = torch.tensor(features).unsqueeze(0)
+        input_tensor = torch.tensor(features).unsqueeze(0).float()
 
-        # Load model
-        model = BattlePolicyNet()
-        if Path("model_weights.pth").exists():
-            model.load_state_dict(torch.load("model_weights.pth"))
-        model.eval()
-
-        # Predict action probabilities
-        with torch.no_grad():
-            probs = model(input_tensor).numpy()[0]
-
-        # Load available actions
         with open(ACTIONS_FILE) as f:
             actions_data = json.load(f)
 
-        available_types = set()
-        for action in actions_data.get("actions", []):
-            type_id = action.get("type")
-            action_name = ACTION_TYPE_MAP.get(type_id)
-            if action_name:
-                available_types.add(action_name)
-
-        if not available_types:
-            print("⚠️ No available action types.")
+        commands = extract_all_possible_commands(actions_data)
+        if not commands:
+            print("⚠️ No executable commands available.")
             return None
 
-        # Filter probabilities for legal actions only
-        legal_indices = [ACTION_INDEX_MAP[a] for a in available_types]
-        legal_probs = probs[legal_indices]
-        legal_probs /= legal_probs.sum()
+        model = BattleCommandScorer()
+        if Path(MODEL_WEIGHTS).exists():
+            model.load_state_dict(torch.load(MODEL_WEIGHTS))
+        model.eval()
 
-        # Sample from legal actions
-        chosen_index = np.random.choice(legal_indices, p=legal_probs)
-        chosen_action = REVERSE_ACTION_INDEX[chosen_index]
-        print(f"🧠 Model chose action type: {chosen_action}")
-        return chosen_action
+        # Map commands to indices
+        num_commands = len(commands)
+        command_logits = model(input_tensor.repeat(num_commands, 1))  # shape: [N, num_actions]
+        scores = command_logits
+
+        probs = torch.softmax(scores, dim=0).detach().numpy()
+        chosen_index = np.random.choice(num_commands, p=probs)
+        chosen_command = commands[chosen_index]
+
+        print(f"🧠 Model chose command: {chosen_command}")
+        return chosen_command
 
     except Exception as e:
         print("❌ Predictor failed:", e)
         return None
-
-# === TEST RUN ===
-if __name__ == "__main__":
-    predict_best_action_type()

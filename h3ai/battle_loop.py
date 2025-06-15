@@ -5,7 +5,7 @@ import time
 import csv
 import random
 from pathlib import Path
-from predictor import predict_best_action_type
+from predictor import predict_best_command
 from battle_state_encoder import encode_battle_state
 
 
@@ -18,40 +18,6 @@ SOCKET_HOST = "localhost"
 CHECK_INTERVAL = 1.5
 LOG_FILE = EXPORT_DIR / "battle_log.csv"
 
-def choose_first_valid_command_of_type(action_type, actions_data):
-    """
-    From available actions in actions_data, pick the first valid command
-    matching the action_type predicted by the model.
-    """
-    commands = []
-
-    for action in actions_data.get("actions", []):
-        type_id = action.get("type")
-
-        # Move
-        if action_type == "move" and type_id == 4:
-            for tile in action.get("reachable_tiles", []):
-                commands.append(f"move {tile['hex']}")
-
-        # Melee
-        elif action_type == "melee" and type_id in (5, 6):
-            for target in action.get("melee_targets", []):
-                if target.get("can_melee_attack", False):
-                    target_hex = target["hex"]
-                    from_hex = target["attack_from"]["hex"]
-                    commands.append(f"melee {target_hex} {from_hex}")
-
-        # Wait
-        elif action_type == "wait" and type_id == 1:
-            commands.append("wait")
-
-        # Defend
-        elif action_type == "defend" and type_id == 0:
-            commands.append("defend")
-
-    if commands:
-        return commands[0]  # Choose the first one
-    return None  # Fallback if no matching command found
 
 def read_json(path):
     try:
@@ -168,17 +134,16 @@ def battle_loop():
         if initial_attacker_strength is None:
             initial_attacker_strength, initial_defender_strength = get_army_strengths(state)
 
-        predicted_type = predict_best_action_type()
-
         # Encode current state
         state_vector = encode_battle_state(state)
-        log_training_example(game_id, state_vector, predicted_type)
+        print("current state vector encoded")
 
-        command = choose_first_valid_command_of_type(predicted_type, actions_data)
+        command = predict_best_command()
 
         if command:
             print(f"👉 Turn {current_turn}: sending command: {command}")
             send_command(command)
+            log_training_example(game_id, state_vector, command)
         else:
             print("❌ No valid commands found.")
             break

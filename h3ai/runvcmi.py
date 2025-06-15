@@ -61,11 +61,12 @@ except Exception as e:
 time.sleep(5)
 
 # Press Right Arrow to move hero
+'''
 try:
     sp.run(["osascript", "-e", 'tell application "System Events" to key code 124'])  # Right Arrow
     print("Pressed Right Arrow to move hero.")
 except Exception as e:
     print(f"Failed to send Right Arrow key: {e}")
-
+'''
 # Wait for VCMI to finish
-vcmi_process.wait()
+#vcmi_process.wait()
