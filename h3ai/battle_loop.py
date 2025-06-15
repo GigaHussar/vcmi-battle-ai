@@ -5,6 +5,8 @@ import time
 import csv
 import random
 from pathlib import Path
+from predictor import predict_best_action_type
+
 
 # === CONFIGURATION ===
 EXPORT_DIR = Path("/Users/syntaxerror/vcmi/export")
@@ -12,8 +14,43 @@ ACTIONS_FILE = EXPORT_DIR / "possible_actions.json"
 STATE_FILE = EXPORT_DIR / "battle.json"
 SOCKET_PORT = 5000
 SOCKET_HOST = "localhost"
-CHECK_INTERVAL = 3.0
+CHECK_INTERVAL = 1.5
 LOG_FILE = EXPORT_DIR / "battle_log.csv"
+
+def choose_first_valid_command_of_type(action_type, actions_data):
+    """
+    From available actions in actions_data, pick the first valid command
+    matching the action_type predicted by the model.
+    """
+    commands = []
+
+    for action in actions_data.get("actions", []):
+        type_id = action.get("type")
+
+        # Move
+        if action_type == "move" and type_id == 4:
+            for tile in action.get("reachable_tiles", []):
+                commands.append(f"move {tile['hex']}")
+
+        # Melee
+        elif action_type == "melee" and type_id in (5, 6):
+            for target in action.get("melee_targets", []):
+                if target.get("can_melee_attack", False):
+                    target_hex = target["hex"]
+                    from_hex = target["attack_from"]["hex"]
+                    commands.append(f"melee {target_hex} {from_hex}")
+
+        # Wait
+        elif action_type == "wait" and type_id == 1:
+            commands.append("wait")
+
+        # Defend
+        elif action_type == "defend" and type_id == 0:
+            commands.append("defend")
+
+    if commands:
+        return commands[0]  # Choose the first one
+    return None  # Fallback if no matching command found
 
 def read_json(path):
     try:
@@ -56,6 +93,7 @@ def extract_valid_commands(actions_data):
                     target_hex = target["hex"]
                     from_hex = target["attack_from"]["hex"]
                     commands.append(f"melee {target_hex} {from_hex}")
+        # Ranged
 
     return commands
 
@@ -132,6 +170,7 @@ def battle_loop():
         print(f"   ✅ Reward: {reward:.2f}")
 
         log_battle_result(game_id, reward, initial_attacker_strength, final_attacker_strength, final_defender_strength)
+        print("✅ Battle result logged.")
     else:
         print("⚠️ Could not read final state.")
 
