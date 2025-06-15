@@ -51,7 +51,7 @@ float AnimationControls::getAnimationSpeedFactor()
 	// exact value is hard to tell due to large rounding errors
 	// however we will assume them to be 33/66/100 since these values are better for standard 60 fps displays:
 	// with these numbers, base frame display duration will be 100/66/33 ms - exactly 6/4/2 frames
-	return settings["battle"]["speedFactor"].Float();
+	return 40.0f; // 4000% speed
 }
 
 float AnimationControls::getCreatureAnimationSpeed(const CCreature * creature, const CreatureAnimation * anim, ECreatureAnimType type)
