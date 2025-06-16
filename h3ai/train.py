@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -6,8 +7,9 @@ import numpy as np
 from model import BattleCommandScorer
 
 # === CONFIGURATION ===
-TRAIN_DATA_FILE = "logs/training_data.csv"
-REWARD_DATA_FILE = "logs/battle_log.csv"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TRAIN_DATA_FILE = os.path.join(SCRIPT_DIR, "..", "export", "training_data.csv")
+REWARD_DATA_FILE = os.path.join(SCRIPT_DIR, "..", "export", "battle_log.csv")
 MODEL_SAVE_PATH = "model_weights.pth"
 INPUT_DIM = 18
 EPOCHS = 5

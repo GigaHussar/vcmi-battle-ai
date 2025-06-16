@@ -7,6 +7,8 @@ import random
 from pathlib import Path
 from predictor import predict_best_command
 from battle_state_encoder import encode_battle_state
+from predictor_helpers import extract_all_possible_commands
+from train import train
 
 
 # === CONFIGURATION ===
@@ -17,6 +19,7 @@ SOCKET_PORT = 5000
 SOCKET_HOST = "localhost"
 CHECK_INTERVAL = 1.5
 LOG_FILE = EXPORT_DIR / "battle_log.csv"
+battle_counter = 0
 
 
 def read_json(path):
@@ -84,27 +87,34 @@ def log_battle_result(game_id, reward, atk_start, atk_end, def_end):
             writer.writerow(["game_id", "reward", "attacker_start", "attacker_end", "defender_end"])
         writer.writerow([game_id, reward, atk_start, atk_end, def_end])
 
-def log_training_example(game_id, state_vector, action_type):
-    """
-    Appends a training sample to logs/training_data.csv:
-    - game_id: unique battle identifier
-    - state_vector: encoded state from battle_state_encoder
-    - action_type: string like "move", "melee", etc.
-    """
+def log_training_example(game_id, state_vector, command, commands):
+    # Define the full path to the training CSV
     log_file = Path("/Users/syntaxerror/vcmi/export/training_data.csv")
+    
+    # Ensure the export folder exists
     log_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Check if the file already exists to decide whether to write the header
     file_exists = log_file.exists()
 
-    # Convert action name to numeric index
-    action_map = {"move": 0, "melee": 1, "shoot": 2, "wait": 3, "defend": 4}
-    action_index = action_map.get(action_type, -1)
+    # Determine which index the chosen command appears at in the available commands list
+    # If it's not in the list, set index to -1 (invalid/unknown)
+    chosen_index = commands.index(command) if command in commands else -1
 
+    # Convert the list of commands into a single pipe-separated string
+    commands_str = "|".join(commands)
+
+    # Open the file in append mode and write the row
     with open(log_file, "a", newline="") as f:
         writer = csv.writer(f)
+        
+        # If file is new, write the CSV header row
         if not file_exists:
-            header = ["game_id"] + [f"f{i}" for i in range(len(state_vector))] + ["action"]
+            header = ["game_id"] + [f"f{i}" for i in range(len(state_vector))] + ["chosen_index", "commands"]
             writer.writerow(header)
-        row = [game_id] + list(state_vector) + [action_index]
+        
+        # Write a new row with: game ID, state features, chosen index, and all commands
+        row = [game_id] + list(state_vector) + [chosen_index, commands_str]
         writer.writerow(row)
 
 
@@ -143,7 +153,12 @@ def battle_loop():
         if command:
             print(f"👉 Turn {current_turn}: sending command: {command}")
             send_command(command)
-            log_training_example(game_id, state_vector, command)
+            # Read available actions from JSON
+            actions_data = read_json(ACTIONS_FILE)
+            commands = extract_all_possible_commands(actions_data)
+
+            # Log full training example including available commands and chosen index
+            log_training_example(game_id, state_vector, command, commands)
         else:
             print("❌ No valid commands found.")
             break
@@ -169,4 +184,12 @@ def battle_loop():
     else:
         print("⚠️ Could not read final state.")
 
+    # Increment battle counter after each battle
+    global battle_counter
+    battle_counter += 1  
+
+    # Train every n battles
+    if battle_counter % 1 == 0:
+        print(f"🧠 Training model after {battle_counter} battles...")
+        train()
 battle_loop()

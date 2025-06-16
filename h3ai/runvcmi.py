@@ -1,72 +1,89 @@
 import os
 import subprocess
 import time
-import socket
-import json
 import subprocess as sp
 
 VCMI_BINARY = "/Users/syntaxerror/vcmi/build/bin/vcmiclient"
+vcmi_process = None  # Global reference to the process
 
-# Check if VCMI binary exists
-if not os.path.isfile(VCMI_BINARY):
-    print(f"Error: VCMI client not found at {VCMI_BINARY}")
-    exit(1)
+def open_vcmi_process():
+    """
+    Launches the VCMI client process.
+    """
+    global vcmi_process
 
+    # Check if VCMI binary exists
+    if not os.path.isfile(VCMI_BINARY):
+        print(f"Error: VCMI client not found at {VCMI_BINARY}")
+        return None
 
-# Launch VCMI without arguments
-print("Launching VCMI...")
-vcmi_process = subprocess.Popen([VCMI_BINARY])
+    try:
+        print("Launching VCMI...")
+        vcmi_process = subprocess.Popen([VCMI_BINARY])
+        return vcmi_process
+    except Exception as e:
+        print(f"Failed to open VCMI process: {e}")
+        return None
 
-# Wait briefly for video to start, then send Return key to skip it
-print("Waiting to skip intro video...")
-time.sleep(3)
-try:
-    sp.run(["osascript", "-e", 'tell application "System Events" to key code 36'])  # Return
-    print("Sent Return key to skip intro video.")
-except Exception as e:
-    print(f"Failed to send key press: {e}")
+def control_vcmi_ui():
+    """
+    Automates UI keypresses to load a scenario in VCMI.
+    Assumes VCMI is already running.
+    """
+    print("Waiting to skip intro video...")
+    time.sleep(3)
 
-# Wait for main menu
-print("Waiting for main menu...")
-time.sleep(5)
+    try:
+        sp.run(["osascript", "-e", 'tell application "System Events" to key code 36'])  # Return
+        print("Sent Return key to skip intro video.")
+    except Exception as e:
+        print(f"Failed to send Return key: {e}")
 
-# Send 'l' to open Load Game menu
-try:
-    sp.run(["osascript", "-e", 'tell application "System Events" to keystroke "l"'])
-    print("Sent 'l' to open Load Game menu.")
-except Exception as e:
-    print(f"Failed to send 'l' key: {e}")
+    print("Waiting for main menu...")
+    time.sleep(5)
 
-# Wait for load menu
-time.sleep(3)
+    try:
+        sp.run(["osascript", "-e", 'tell application "System Events" to keystroke "l"'])
+        print("Sent 'l' to open Load Game menu.")
+    except Exception as e:
+        print(f"Failed to send 'l' key: {e}")
 
-# Send 's' to select single scenario
-try:
-    sp.run(["osascript", "-e", 'tell application "System Events" to keystroke "s"'])
-    print("Sent 's' to select single scenario.")
-except Exception as e:
-    print(f"Failed to send 's' key: {e}")
+    time.sleep(3)
 
-# Wait before confirming
-time.sleep(2)
+    try:
+        sp.run(["osascript", "-e", 'tell application "System Events" to keystroke "s"'])
+        print("Sent 's' to select single scenario.")
+    except Exception as e:
+        print(f"Failed to send 's' key: {e}")
 
-# Press Return to confirm selection
-try:
-    sp.run(["osascript", "-e", 'tell application "System Events" to key code 36'])
-    print("Pressed Return to confirm selection.")
-except Exception as e:
-    print(f"Failed to send Return key: {e}")
+    time.sleep(2)
 
-# Wait for game world to load
-time.sleep(5)
+    try:
+        sp.run(["osascript", "-e", 'tell application "System Events" to key code 36'])  # Return
+        print("Pressed Return to confirm selection.")
+    except Exception as e:
+        print(f"Failed to send Return key: {e}")
 
-# Press Right Arrow to move hero
-'''
-try:
-    sp.run(["osascript", "-e", 'tell application "System Events" to key code 124'])  # Right Arrow
-    print("Pressed Right Arrow to move hero.")
-except Exception as e:
-    print(f"Failed to send Right Arrow key: {e}")
-'''
-# Wait for VCMI to finish
-#vcmi_process.wait()
+    time.sleep(5)
+
+    try:
+        sp.run(["osascript", "-e", 'tell application "System Events" to key code 124'])  # Right Arrow
+        print("Pressed Right Arrow to move hero.")
+    except Exception as e:
+        print(f"Failed to send Right Arrow key: {e}")
+
+def close_vcmi_process():
+    """
+    Closes the VCMI client process.
+    """
+    time.sleep(3)
+    print("Closing VCMI process...")
+    global vcmi_process
+    if vcmi_process:
+        vcmi_process.kill()
+        vcmi_process.wait()
+        print("VCMI process closed.")
+
+open_vcmi_process()
+control_vcmi_ui()
+close_vcmi_process()
