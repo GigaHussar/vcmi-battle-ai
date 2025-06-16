@@ -9,6 +9,7 @@ from predictor import predict_best_command
 from battle_state_encoder import encode_battle_state
 from predictor_helpers import extract_all_possible_commands
 from train import train
+import runvcmi
 
 
 # === CONFIGURATION ===
@@ -192,4 +193,10 @@ def battle_loop():
     if battle_counter % 1 == 0:
         print(f"🧠 Training model after {battle_counter} battles...")
         train()
-battle_loop()
+    
+for i in range(3):
+    runvcmi.open_vcmi_process()
+    runvcmi.control_vcmi_ui()
+    battle_loop()
+    #close the game
+    runvcmi.close_vcmi_process()

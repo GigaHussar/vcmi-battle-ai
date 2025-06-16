@@ -71,6 +71,8 @@ def control_vcmi_ui():
         print("Pressed Right Arrow to move hero.")
     except Exception as e:
         print(f"Failed to send Right Arrow key: {e}")
+    
+    time.sleep(5)
 
 def close_vcmi_process():
     """
@@ -83,7 +85,3 @@ def close_vcmi_process():
         vcmi_process.kill()
         vcmi_process.wait()
         print("VCMI process closed.")
-
-open_vcmi_process()
-control_vcmi_ui()
-close_vcmi_process()
