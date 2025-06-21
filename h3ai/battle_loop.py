@@ -6,7 +6,6 @@ import csv
 import random
 from pathlib import Path
 from predictor import predict_best_command
-from battle_state_encoder import encode_battle_state
 from predictor_helpers import extract_all_possible_commands
 from train import train
 import runvcmi

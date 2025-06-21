@@ -2,7 +2,6 @@ import torch
 import numpy as np
 import json
 from pathlib import Path
-from battle_state_encoder import encode_battle_state
 from model import BattleCommandScorer
 from predictor_helpers import extract_all_possible_commands  # assuming moved to predictor_helpers.py
 
