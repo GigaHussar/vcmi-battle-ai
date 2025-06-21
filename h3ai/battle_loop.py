@@ -9,6 +9,7 @@ from predictor import predict_best_command
 from predictor_helpers import extract_all_possible_commands
 from train import train
 import runvcmi
+import log_battle_state_per_turn
 
 
 # === CONFIGURATION ===
@@ -166,6 +167,8 @@ def battle_loop():
         if last_turn == current_turn:
             print("🏁 Battle ended. Collecting result...")
             break
+
+        log_battle_state_per_turn.log_state(game_id, current_turn, performance = 0.0)
 
         last_turn = current_turn
 

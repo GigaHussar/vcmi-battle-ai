@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from model import BattleCommandScorer
 from predictor_helpers import extract_all_possible_commands  # assuming moved to predictor_helpers.py
-from battle_state_to_tensor import encode_battle_state
+from battle_state_to_tensor import encode_battle_state_from_json 
 # === CONFIGURATION ===
 STATE_FILE = Path("/Users/syntaxerror/vcmi/export/battle.json")
 ACTIONS_FILE = Path("/Users/syntaxerror/vcmi/export/possible_actions.json")
@@ -14,7 +14,7 @@ def predict_best_command():
     try:
         with open(STATE_FILE) as f:
             state_json = json.load(f)
-        features = encode_battle_state(state_json)
+        features = encode_battle_state_from_json(state_json)
         input_tensor = torch.tensor(features).unsqueeze(0).float()
 
         with open(ACTIONS_FILE) as f:
