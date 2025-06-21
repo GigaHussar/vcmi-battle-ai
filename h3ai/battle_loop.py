@@ -194,7 +194,7 @@ def battle_loop():
         print(f"🧠 Training model after {battle_counter} battles...")
         train()
     
-for i in range(3):
+for i in range(20):
     runvcmi.open_vcmi_process()
     runvcmi.control_vcmi_ui()
     battle_loop()
