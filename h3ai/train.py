@@ -9,18 +9,43 @@ from model import BattleCommandScorer
 # === CONFIGURATION ===
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRAIN_DATA_FILE = os.path.join(SCRIPT_DIR, "..", "export", "training_data.csv")
-REWARD_DATA_FILE = os.path.join(SCRIPT_DIR, "..", "export", "battle_log.csv")
 MODEL_SAVE_PATH = "model_weights.pth"
 INPUT_DIM = 18
 EPOCHS = 5
-BATCH_SIZE = 1  # Train one battle at a time for full context
+BATCH_SIZE = 1  # One action per sample
 LEARNING_RATE = 1e-3
 
+# === REWARD SCALING PARAMETERS ===
+WEIGHT_ENEMY_DAMAGE = 1.0      # Encourage doing damage
+WEIGHT_SELF_LOSS = 1.0         # Discourage taking damage
+WEIGHT_TRADE_EFFICIENCY = 0.5  # Encourage positive damage-to-loss ratio
+
+def compute_shaped_reward(row):
+    # Input fields expected in training_data.csv:
+    # - enemy_damage: amount of HP or unit value dealt to enemies
+    # - self_damage: amount of HP or unit value lost by acting unit
+    # - reward_base: optional base game-level reward (e.g. win=1, lose=0)
+
+    # Encourage hurting enemies
+    r_damage = WEIGHT_ENEMY_DAMAGE * row["enemy_damage"]
+
+    # Penalize own losses
+    r_self = -WEIGHT_SELF_LOSS * row["self_damage"]
+
+    # Reward favorable trades (if damage > self-damage, this is positive)
+    trade_score = row["enemy_damage"] - row["self_damage"]
+    r_trade = WEIGHT_TRADE_EFFICIENCY * trade_score
+
+    # Optional: include long-term base reward
+    base = row.get("reward_base", 0.0)
+
+    shaped_reward = r_damage + r_self + r_trade + base
+    return shaped_reward
+
 def load_training_data():
-    train_df = pd.read_csv(TRAIN_DATA_FILE)
-    reward_df = pd.read_csv(REWARD_DATA_FILE)
-    merged = train_df.merge(reward_df[["game_id", "reward"]], on="game_id")
-    return merged
+    df = pd.read_csv(TRAIN_DATA_FILE)
+    df["shaped_reward"] = df.apply(compute_shaped_reward, axis=1)
+    return df
 
 def train():
     data = load_training_data()
@@ -40,12 +65,12 @@ def train():
             num_cmds = len(commands)
 
             state_batch = np.tile(state_vec, (num_cmds, 1))  # shape [N, 18]
-            xb = torch.tensor(state_batch)
+            xb = torch.tensor(state_batch, dtype=torch.float32)
             yb = torch.tensor([chosen_index])
-            reward = torch.tensor([row["reward"]], dtype=torch.float32)
+            reward = torch.tensor([row["shaped_reward"]], dtype=torch.float32)
 
-            logits = model(xb).unsqueeze(0)  # shape [1, N]
-            loss = loss_fn(logits, yb) * reward  # scale by reward
+            logits = model(xb).unsqueeze(0)  # [1, N]
+            loss = loss_fn(logits, yb) * reward  # scale loss by reward
 
             optimizer.zero_grad()
             loss.backward()
