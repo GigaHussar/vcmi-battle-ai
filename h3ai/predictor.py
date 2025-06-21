@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from model import BattleCommandScorer
 from predictor_helpers import extract_all_possible_commands  # assuming moved to predictor_helpers.py
-
+from battle_state_to_tensor import encode_battle_state
 # === CONFIGURATION ===
 STATE_FILE = Path("/Users/syntaxerror/vcmi/export/battle.json")
 ACTIONS_FILE = Path("/Users/syntaxerror/vcmi/export/possible_actions.json")

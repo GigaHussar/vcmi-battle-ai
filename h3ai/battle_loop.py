@@ -18,7 +18,7 @@ STATE_FILE = EXPORT_DIR / "battle.json"
 SOCKET_PORT = 5000
 SOCKET_HOST = "localhost"
 CHECK_INTERVAL = 1.5
-LOG_FILE = EXPORT_DIR / "battle_log.csv"
+LOG_FILE = EXPORT_DIR / "battle_results.csv"
 battle_counter = 0
 
 
@@ -78,14 +78,30 @@ def get_army_strengths(state):
         state.get("army_strength_defender", 0)
     )
 
-def log_battle_result(game_id, reward, atk_start, atk_end, def_end):
+def log_battle_result(
+    game_id,
+    reward,
+    attacker_start,
+    attacker_end,
+    defender_start,
+    defender_end,
+    performance
+):
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     file_exists = LOG_FILE.exists()
+
     with open(LOG_FILE, "a", newline="") as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["game_id", "reward", "attacker_start", "attacker_end", "defender_end"])
-        writer.writerow([game_id, reward, atk_start, atk_end, def_end])
+            writer.writerow([
+                "game_id",
+                "reward",
+                "attacker_start",
+                "attacker_end",
+                "defender_start",
+                "defender_end",
+                "performance"
+            ])
 
 def log_training_example(game_id, state_vector, command, commands):
     # Define the full path to the training CSV
@@ -117,6 +133,15 @@ def log_training_example(game_id, state_vector, command, commands):
         row = [game_id] + list(state_vector) + [chosen_index, commands_str]
         writer.writerow(row)
 
+def compute_performance(kills: float, losses: float) -> float:
+    """
+    Returns the fraction of total casualties that were enemy kills.
+    If there were no casualties, returns 0.0.
+    """
+    total = kills + losses
+    if total <= 0:
+        return 0.0
+    return kills / total
 
 def battle_loop():
     print("🧠 Agent started. Waiting for battle to begin...")
@@ -124,6 +149,9 @@ def battle_loop():
     initial_attacker_strength = None
     initial_defender_strength = None
     game_id = int(time.time())
+
+    #generate tensors once, at the start of the battle
+    os.system(f"python3 battle_state_to_tensor.py {game_id}")
 
     while True:
         state = read_json(STATE_FILE)
@@ -143,10 +171,6 @@ def battle_loop():
 
         if initial_attacker_strength is None:
             initial_attacker_strength, initial_defender_strength = get_army_strengths(state)
-
-        # Encode current state
-        state_vector = encode_battle_state(state)
-        print("current state vector encoded")
 
         command = predict_best_command()
 
@@ -169,17 +193,28 @@ def battle_loop():
     state = read_json(STATE_FILE)
     if state:
         final_attacker_strength, final_defender_strength = get_army_strengths(state)
-        reward = (
-            final_attacker_strength
-            - (initial_attacker_strength - final_attacker_strength)
-            + (initial_defender_strength - final_defender_strength) * 0.5
-        )
-        print("📊 Final Result:")
-        print(f"   🛡  Attacker: {initial_attacker_strength} → {final_attacker_strength}")
-        print(f"   ⚔️  Defender: {initial_defender_strength} → {final_defender_strength}")
-        print(f"   ✅ Reward: {reward:.2f}")
 
-        log_battle_result(game_id, reward, initial_attacker_strength, final_attacker_strength, final_defender_strength)
+        # compute raw kills & losses
+        kills   = initial_defender_strength - final_defender_strength
+        losses  = initial_attacker_strength - final_attacker_strength
+
+        # new “performance” metric
+        performance = compute_performance(kills, losses)
+
+        print("📊 Final Result:")
+        print(f"   🛡  Attacker: {initial_attacker_strength} → {final_attacker_strength} (losses={losses})")
+        print(f"   ⚔️  Defender: {initial_defender_strength} → {final_defender_strength} (kills={kills})")
+        print(f"   🎯 Performance (kills/(kills+losses)): {performance:.3f}")
+
+        # log everything
+        log_battle_result(
+            game_id,
+            initial_attacker_strength,
+            final_attacker_strength,
+            initial_defender_strength,
+            final_defender_strength,
+            performance=performance
+            )
         print("✅ Battle result logged.")
     else:
         print("⚠️ Could not read final state.")
