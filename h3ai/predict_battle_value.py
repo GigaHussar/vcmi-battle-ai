@@ -5,7 +5,7 @@ from model import BattleStateEvaluator
 from battle_state_to_tensor import encode_battle_state_from_json
 
 # === Load state from JSON ===
-with open("/Users/syntaxerror/vcmi/export/battle.json") as f:
+with open("/Users/syntaxerror/vcmi/export/battle_log.json") as f:
     battle_data = json.load(f)
 
 features, creature_ids, faction_ids = encode_battle_state_from_json(battle_data)

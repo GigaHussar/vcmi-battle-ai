@@ -172,6 +172,7 @@ def battle_loop():
         if initial_attacker_strength is None:
             initial_attacker_strength, initial_defender_strength = get_army_strengths(state)
 
+        '''
         command = predict_best_command()
 
         if command:
@@ -186,6 +187,7 @@ def battle_loop():
         else:
             print("❌ No valid commands found.")
             break
+        '''
 
         time.sleep(CHECK_INTERVAL)
 
@@ -223,14 +225,11 @@ def battle_loop():
     global battle_counter
     battle_counter += 1  
 
-    # Train every n battles
-    if battle_counter % 1 == 0:
-        print(f"🧠 Training model after {battle_counter} battles...")
-        train()
-    
+'''
 for i in range(20):
     runvcmi.open_vcmi_process()
     runvcmi.control_vcmi_ui()
     battle_loop()
     #close the game
     runvcmi.close_vcmi_process()
+'''
