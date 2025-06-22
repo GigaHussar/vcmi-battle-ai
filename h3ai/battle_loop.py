@@ -9,7 +9,7 @@ from predictor import predict_best_command
 from predictor_helpers import extract_all_possible_commands
 from train import train
 import runvcmi
-import log_battle_state_per_turn
+from log_battle_state_per_turn import log_state, update_value_csv_path
 
 
 # === CONFIGURATION ===
@@ -145,6 +145,7 @@ def compute_performance(kills: float, losses: float) -> float:
 
 def battle_loop():
     print("🧠 Agent started. Waiting for battle to begin...")
+    current_turn = 0
     last_turn = -1
     initial_attacker_strength = None
     initial_defender_strength = None
@@ -165,10 +166,10 @@ def battle_loop():
         current_turn = actions_data.get("turn", -1)
 
         # 🛠 Quick manual-play fallback:
-        # Wait up to 9 seconds (3 checks) to confirm the turn isn't advancing.
+        # Wait to confirm the turn isn't advancing.
         # Helps avoid false positives when playing battles manually.
         stall_checks = 0
-        while last_turn == current_turn and stall_checks < 3:
+        while last_turn == current_turn and stall_checks < 6:
             print(f"⏳ Turn {current_turn} unchanged, waiting... ({stall_checks + 1}/3)")
             time.sleep(3)
             state = read_json(STATE_FILE)
@@ -182,7 +183,7 @@ def battle_loop():
             print("🏁 Battle ended. Collecting result...")
             break
 
-        log_battle_state_per_turn.log_state(game_id, current_turn, performance = 0.0)
+        log_state(game_id, current_turn, performance = 0.0)
 
         last_turn = current_turn
 
@@ -236,8 +237,8 @@ def battle_loop():
             )
         print("✅ Battle result logged.")
         # Update the value_labels.csv with the final performance
-        if log_battle_state_per_turn.update_value_labels_csv(game_id, final_performance=performance):
-            print("✅ Updated value_labels.csv with final performance.")
+        update_value_csv_path(game_id, final_performance=performance)
+        print("✅ Updated value_labels.csv with final performance.")
         
     else:
         print("⚠️ Could not read final state.")
