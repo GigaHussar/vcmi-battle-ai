@@ -5,6 +5,8 @@ import numpy as np
 from pathlib import Path
 from battle_state_to_tensor import encode_battle_state_from_json
 import csv
+import shutil
+import pandas as pd
 
 EXPORT_DIR = Path("/Users/syntaxerror/vcmi/export")
 TENSOR_DIR = Path("h3ai")
@@ -26,9 +28,10 @@ def log_state(game_id, turn, performance):
 
     features, creature_ids, faction_ids = encode_battle_state_from_json(state)
 
-    # Save raw battle.json for this turn
-    with open(f"h3ai/battle_json_{game_id}_{turn}.json", "w") as f_out:
-        json.dump(state, f_out, indent=2)
+    # Copy raw battle.json to permanent filename
+    TENSOR_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy(STATE_FILE, TENSOR_DIR / f"battle_json_{game_id}_{turn}.json")
+
     
     # Save tensors
     np.save(TENSOR_DIR / f"battle_state_{game_id}_{turn}.npy", features)
@@ -44,3 +47,18 @@ def log_state(game_id, turn, performance):
         if write_header:
             writer.writerow(["game_id", "turn", "performance"])
         writer.writerow([game_id, turn, performance])
+
+def update_value_labels_csv(game_id: int, final_performance: float, csv_path: str = "value_labels.csv"):
+    try:
+        df = pd.read_csv(csv_path)
+        if "game_id" not in df.columns or "performance" not in df.columns:
+            print("❌ CSV missing required columns.")
+            return False
+
+        df.loc[df["game_id"] == game_id, "performance"] = final_performance
+        df.to_csv(csv_path, index=False)
+        print(f"✅ Updated performance for game_id {game_id} to {final_performance}")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to update CSV: {e}")
+        return False

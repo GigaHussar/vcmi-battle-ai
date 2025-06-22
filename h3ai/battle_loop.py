@@ -152,7 +152,7 @@ def battle_loop():
     game_id = int(time.time())
 
     #generate tensors once, at the start of the battle
-    os.system(f"python3 battle_state_to_tensor.py {game_id}")
+    #os.system(f"python3 battle_state_to_tensor.py {game_id}")
 
     while True:
         state = read_json(STATE_FILE)
@@ -221,6 +221,10 @@ def battle_loop():
             performance=performance
             )
         print("✅ Battle result logged.")
+        # Update the value_labels.csv with the final performance
+        if log_battle_state_per_turn.update_value_labels_csv(game_id, final_performance=performance):
+            print("✅ Updated value_labels.csv with final performance.")
+        
     else:
         print("⚠️ Could not read final state.")
 
