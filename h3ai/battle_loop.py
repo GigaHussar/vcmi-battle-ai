@@ -81,7 +81,6 @@ def get_army_strengths(state):
 
 def log_battle_result(
     game_id,
-    reward,
     attacker_start,
     attacker_end,
     defender_start,
@@ -164,6 +163,21 @@ def battle_loop():
             continue
 
         current_turn = actions_data.get("turn", -1)
+
+        # 🛠 Quick manual-play fallback:
+        # Wait up to 9 seconds (3 checks) to confirm the turn isn't advancing.
+        # Helps avoid false positives when playing battles manually.
+        stall_checks = 0
+        while last_turn == current_turn and stall_checks < 3:
+            print(f"⏳ Turn {current_turn} unchanged, waiting... ({stall_checks + 1}/3)")
+            time.sleep(3)
+            state = read_json(STATE_FILE)
+            actions_data = read_json(ACTIONS_FILE)
+            if not state or not actions_data:
+                break
+            current_turn = actions_data.get("turn", -1)
+            stall_checks += 1
+
         if last_turn == current_turn:
             print("🏁 Battle ended. Collecting result...")
             break
@@ -240,3 +254,4 @@ for i in range(20):
     #close the game
     runvcmi.close_vcmi_process()
 '''
+battle_loop()

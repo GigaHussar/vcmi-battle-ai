@@ -9,9 +9,12 @@ import shutil
 import pandas as pd
 
 EXPORT_DIR = Path("/Users/syntaxerror/vcmi/export")
-TENSOR_DIR = Path("h3ai")
-LABELS_CSV = Path("value_labels.csv")
 STATE_FILE = EXPORT_DIR / "battle.json"
+
+def get_export_subdir(game_id):
+    folder = EXPORT_DIR / f"game_{game_id}"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 def read_json(path):
     try:
@@ -28,8 +31,11 @@ def log_state(game_id, turn, performance):
 
     features, creature_ids, faction_ids = encode_battle_state_from_json(state)
 
-    # Copy raw battle.json to permanent filename
+    export_subdir = get_export_subdir(game_id)
+    TENSOR_DIR = export_subdir / "tensors"
     TENSOR_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Copy the battle state JSON, assign a unique name
     shutil.copy(STATE_FILE, TENSOR_DIR / f"battle_json_{game_id}_{turn}.json")
 
     
@@ -39,16 +45,20 @@ def log_state(game_id, turn, performance):
     np.save(TENSOR_DIR / f"faction_id_{game_id}_{turn}.npy", faction_ids)
 
     # Log performance label
-    LABELS_CSV.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not LABELS_CSV.exists()
+    csv_path = export_subdir / "value_labels.csv"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not csv_path.exists()
 
-    with open(LABELS_CSV, "a", newline="") as f:
+    with open(csv_path, "a", newline="") as f:
         writer = csv.writer(f)
         if write_header:
             writer.writerow(["game_id", "turn", "performance"])
         writer.writerow([game_id, turn, performance])
 
-def update_value_labels_csv(game_id: int, final_performance: float, csv_path: str = "value_labels.csv"):
+def update_value_csv_path(game_id: int, final_performance: float, csv_path: Path = None):
+    if csv_path is None:
+        csv_path = EXPORT_DIR / f"game_{game_id}" / "value_labels.csv"
+
     try:
         df = pd.read_csv(csv_path)
         if "game_id" not in df.columns or "performance" not in df.columns:
