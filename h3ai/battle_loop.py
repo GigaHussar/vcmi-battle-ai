@@ -38,36 +38,6 @@ def send_command(command):
     except Exception as e:
         print(f"Socket error: {e}")
 
-def extract_valid_commands(actions_data):
-    commands = []
-
-    for action in actions_data.get("actions", []):
-        action_type = action.get("type")
-
-        # Defend
-        if action_type == 0:
-            commands.append("defend")
-
-        # Wait
-        elif action_type == 1:
-            commands.append("wait")
-
-        # Move
-        elif action_type == 4:
-            for tile in action.get("reachable_tiles", []):
-                commands.append(f"move {tile['hex']}")
-
-        # Melee
-        elif action_type in (5, 6):
-            for target in action.get("melee_targets", []):
-                if target.get("can_melee_attack", False):
-                    target_hex = target["hex"]
-                    from_hex = target["attack_from"]["hex"]
-                    commands.append(f"melee {target_hex} {from_hex}")
-        # Ranged
-
-    return commands
-
 def choose_random_action(commands):
     if commands:
         return random.choice(commands)
@@ -184,6 +154,7 @@ def battle_loop():
             break
 
         log_state(game_id, current_turn, performance = 0.0)
+        
 
         last_turn = current_turn
 
@@ -191,20 +162,11 @@ def battle_loop():
             initial_attacker_strength, initial_defender_strength = get_army_strengths(state)
 
         '''
-        command = predict_best_command()
-
-        if command:
-            print(f"👉 Turn {current_turn}: sending command: {command}")
-            send_command(command)
-            # Read available actions from JSON
-            actions_data = read_json(ACTIONS_FILE)
-            commands = extract_all_possible_commands(actions_data)
-
-            # Log full training example including available commands and chosen index
-            log_training_example(game_id, state_vector, command, commands)
-        else:
-            print("❌ No valid commands found.")
-            break
+        chosen = predict_best_command()
+        if chosen:
+            cmd_str = format_command_for_vcmi(chosen)
+            print(f"👉 Sending to game: {cmd_str}")
+            send_command(cmd_str)
         '''
 
         time.sleep(CHECK_INTERVAL)

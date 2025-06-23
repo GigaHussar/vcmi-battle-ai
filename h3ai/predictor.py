@@ -2,46 +2,53 @@ import torch
 import numpy as np
 import json
 from pathlib import Path
-from model import BattleCommandScorer
-from predictor_helpers import extract_all_possible_commands  # assuming moved to predictor_helpers.py
-from battle_state_to_tensor import encode_battle_state_from_json 
-# === CONFIGURATION ===
-STATE_FILE = Path("/Users/syntaxerror/vcmi/export/battle.json")
-ACTIONS_FILE = Path("/Users/syntaxerror/vcmi/export/possible_actions.json")
-MODEL_WEIGHTS = "model_weights.pth"
+
+from model                import BattleCommandScorer
+from predictor_helpers    import extract_all_possible_commands
+from battle_state_to_tensor import encode_battle_state_from_json
+
+# ---- CONFIG ----
+STATE_FILE    = Path("/Users/syntaxerror/vcmi/export/battle.json")
+ACTIONS_FILE  = Path("/Users/syntaxerror/vcmi/export/possible_actions.json")
+MODEL_WEIGHTS = Path("model_weights.pth")
+
+# 1) Instantiate your model once, load weights if available
+model = BattleCommandScorer()
+if MODEL_WEIGHTS.exists():
+    model.load_state_dict(torch.load(MODEL_WEIGHTS))
+model.eval()
 
 def predict_best_command():
     try:
-        with open(STATE_FILE) as f:
-            state_json = json.load(f)
-        features = encode_battle_state_from_json(state_json)
-        input_tensor = torch.tensor(features).unsqueeze(0).float()
+        # 2) Load & encode state
+        state_json = json.loads(STATE_FILE.read_text())
+        feats, c_ids, f_ids = encode_battle_state_from_json(state_json)
+        # flatten & concat into one vector of length 2970
+        state_vec = torch.from_numpy(
+            np.concatenate([feats.flatten(),
+                            c_ids.flatten(),
+                            f_ids.flatten()])
+        ).float()
 
-        with open(ACTIONS_FILE) as f:
-            actions_data = json.load(f)
-
-        commands = extract_all_possible_commands(actions_data)
-        if not commands:
-            print("⚠️ No executable commands available.")
+        # 3) Load & extract actions
+        actions_data  = json.loads(ACTIONS_FILE.read_text())
+        action_dicts  = extract_all_possible_commands(actions_data)
+        if not action_dicts:
+            print("⚠️ No legal actions.")
             return None
 
-        model = BattleCommandScorer()
-        if Path(MODEL_WEIGHTS).exists():
-            model.load_state_dict(torch.load(MODEL_WEIGHTS))
-        model.eval()
+        # 4) Score actions
+        with torch.no_grad():
+            scores = model(state_vec, action_dicts)  # [k]
 
-        # Map commands to indices
-        num_commands = len(commands)
-        command_logits = model(input_tensor.repeat(num_commands, 1))  # shape: [N, num_actions]
-        scores = command_logits
+        # 5) Pick best (or sample)
+        best_idx = scores.argmax().item()
+        chosen  = action_dicts[best_idx]
 
-        probs = torch.softmax(scores, dim=0).detach().numpy()
-        chosen_index = np.random.choice(num_commands, p=probs)
-        chosen_command = commands[chosen_index]
-
-        print(f"🧠 Model chose command: {chosen_command}")
-        return chosen_command
+        print(f"🧠 Model chose: {chosen}")
+        return chosen
 
     except Exception as e:
         print("❌ Predictor failed:", e)
         return None
+
