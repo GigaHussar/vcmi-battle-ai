@@ -9,15 +9,13 @@ from torch.distributions import Categorical
 from model import ActionEncoder, BattleCommandScorer
 import torch
 import numpy as np
+from runvcmi import open_vcmi_process, control_vcmi_ui, close_vcmi_process
+from paths import EXPORT_DIR, BATTLE_JSON_PATH, ACTIONS_FILE, MODEL_WEIGHTS, MASTER_LOG
 
 # === CONFIGURATION ===
-EXPORT_DIR = Path("/Users/syntaxerror/vcmi/export")
-ACTIONS_FILE = EXPORT_DIR / "possible_actions.json"
-STATE_FILE = EXPORT_DIR / "battle.json"
 SOCKET_PORT = 5000
 SOCKET_HOST = "localhost"
 CHECK_INTERVAL = 1.5
-LOG_FILE = EXPORT_DIR / "battle_results.csv"
 battle_counter = 0
 
 def format_command_for_vcmi(action: dict) -> str:
@@ -70,6 +68,10 @@ def compute_performance(kills: float, losses: float) -> float:
     return kills / total
 
 def battle_loop():
+    open_vcmi_process()
+    control_vcmi_ui()
+    time.sleep(2)
+    
     print("🧠 Agent started. Waiting for battle to begin...")
     current_turn = 0
     last_turn = -1
@@ -78,8 +80,9 @@ def battle_loop():
     prev_att_str = prev_def_str = None
     game_id = int(time.time())
 
+    print("starting battle loop...")
     while True:
-        state = read_json(STATE_FILE)
+        state = read_json(BATTLE_JSON_PATH)
         actions_data = read_json(ACTIONS_FILE)
 
         if not state or not actions_data:
@@ -126,7 +129,7 @@ def battle_loop():
         time.sleep(CHECK_INTERVAL)
 
     # After battle ends
-    state = read_json(STATE_FILE)
+    state = read_json(BATTLE_JSON_PATH)
     if state:
         final_attacker_strength, final_defender_strength = get_army_strengths(state)
 
@@ -149,3 +152,11 @@ def battle_loop():
     # Increment battle counter after each battle
     global battle_counter
     battle_counter += 1  
+
+    close_vcmi_process()
+
+for i in range(5):
+    print(f"Starting battle loop iteration {i + 1}...")
+    battle_loop()
+    print(f"Battle loop iteration {i + 1} completed.\n")
+    time.sleep(2)  # Pause between iterations

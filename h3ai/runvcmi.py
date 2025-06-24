@@ -84,4 +84,7 @@ def close_vcmi_process():
     if vcmi_process:
         vcmi_process.kill()
         vcmi_process.wait()
+        vcmi_process = None
         print("VCMI process closed.")
+    else:
+        print("VCMI process was already terminated.")

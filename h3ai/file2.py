@@ -6,13 +6,11 @@ import logging
 import torch
 from model import BattleCommandScorer, ActionEncoder
 import csv
+from paths import ACTIONS_FILE, MODEL_WEIGHTS, MASTER_LOG, BASE_PATH, EXPORT_DIR, H3AI_DIR, BATTLE_JSON_PATH
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Project root (vcmi/) two levels up from this file
-base_path = Path(__file__).resolve().parent.parent
 
 # Constants
 WIDTH_FULL = 17
@@ -34,11 +32,6 @@ ACTION_TYPE_MAP = {
     # 6 is now ignored
 }
 
-# ---- CONFIG ----
-STATE_FILE    = base_path / "export" / "battle.json"
-ACTIONS_FILE  = base_path / "export" / "possible_actions.json"
-MODEL_WEIGHTS = base_path / "h3ai" / "model_weights.pth"
-MASTER_LOG    = base_path / "export" / "master_log.csv"
 
 # 1) Instantiate your model once, load weights if available
 model = BattleCommandScorer()
@@ -93,7 +86,7 @@ def extract_all_possible_commands(actions_data):
 def predict_best_command():
     try:
         # 2) Load & encode state
-        state_json = json.loads(STATE_FILE.read_text())
+        state_json = json.loads(BATTLE_JSON_PATH.read_text())
         feats, c_ids, f_ids = encode_battle_state_from_json(state_json)
         # flatten & concat into one vector of length 2970
         state_vec = torch.from_numpy(
@@ -208,29 +201,26 @@ def save_battle_state_to_tensors(game_id: str, base_path: Path):
     Loads battle.json, encodes the state once, and then
     saves .npy tensors plus CSV inspection files.
     """
-    export_dir        = base_path / "export"
-    h3ai_dir          = base_path / "h3ai"
-    battle_json_path  = export_dir / "battle.json"
-    export_dir.mkdir(exist_ok=True)
-    h3ai_dir.mkdir(exist_ok=True)
+    EXPORT_DIR.mkdir(exist_ok=True)
+    H3AI_DIR.mkdir(exist_ok=True)
 
-    if not battle_json_path.exists():
-        logger.error(f"No battle.json found at {battle_json_path}")
+    if not BATTLE_JSON_PATH.exists():
+        logger.error(f"No battle.json found at {BATTLE_JSON_PATH}. Please run a battle first.")
         return   
-    battle_data = json.loads(battle_json_path.read_text())
+    battle_data = json.loads(BATTLE_JSON_PATH.read_text())
 
     tensor, creature_ids, faction_ids = encode_battle_state_from_json(battle_data)
 
     # npy outputs
-    np.save(h3ai_dir / f"battlefield_tensor_{game_id}.npy", tensor)
-    np.save(h3ai_dir / f"creature_id_tensor_{game_id}.npy", creature_ids)
-    np.save(h3ai_dir / f"faction_id_tensor_{game_id}.npy", faction_ids)
+    np.save(H3AI_DIR / f"battlefield_tensor_{game_id}.npy", tensor)
+    np.save(H3AI_DIR / f"creature_id_tensor_{game_id}.npy", creature_ids)
+    np.save(H3AI_DIR / f"faction_id_tensor_{game_id}.npy", faction_ids)
     logger.info(f"Saved .npy tensors with game_id={game_id}")
 
     # CSV inspection
-    flatten_for_inspection(tensor, export_dir / f"battlefield_tensor_flat_{game_id}.csv")
-    pd.DataFrame(creature_ids).to_csv(export_dir / f"creature_id_matrix_{game_id}.csv", index=False)
-    pd.DataFrame(faction_ids).to_csv(export_dir / f"faction_id_matrix_{game_id}.csv", index=False)
+    flatten_for_inspection(tensor, EXPORT_DIR / f"battlefield_tensor_flat_{game_id}.csv")
+    pd.DataFrame(creature_ids).to_csv(EXPORT_DIR / f"creature_id_matrix_{game_id}.csv", index=False)
+    pd.DataFrame(faction_ids).to_csv(EXPORT_DIR / f"faction_id_matrix_{game_id}.csv", index=False)
     logger.info("Saved CSV inspection files")
 
 def save_action_tensor(game_id: str, turn: int, action_dicts: list[dict], out_dir: Path):
@@ -303,7 +293,7 @@ def main():
         help="Identifier for this battle run (used in output filenames)"
     )
     args = parser.parse_args()
-    save_battle_state_to_tensors(args.game_id, base_path)
+    save_battle_state_to_tensors(args.game_id, BASE_PATH)
 
 if __name__ == "__main__":
     main()
