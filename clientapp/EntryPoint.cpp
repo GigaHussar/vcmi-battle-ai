@@ -52,7 +52,18 @@
 #include <cstring>
 #include "../client/battle/BattleActionsController.h"
 #include "../client/battle/BattleInterface.h"
+#include "StdInc.h"
+#include "GameInstance.h"
 
+// Pull in the adventure‐map state and selection API
+#include "../client/PlayerLocalState.h"       // defines PlayerLocalState::getCurrentHero()
+
+// Full definitions for CGHeroInstance and int3
+#include "../lib/mapObjects/CGHeroInstance.h"
+#include "../lib/pathfinder/CGPathNode.h"      // where `int3` is declared
+
+// The callback interface that packages and sends MoveHero packets
+#include "../lib/callback/CCallback.h"
 
 
 #ifdef VCMI_ANDROID
@@ -135,6 +146,10 @@ int main(int argc, char * argv[])
 	CAndroidVMHelper::initClassloader(SDL_AndroidGetJNIEnv());
 	// boost will crash without this
 	setenv("LANG", "C", 1);
+	    std::thread([]() {
+        // …
+    }).detach();
+#endif  // VCMI_ANDROID
 #if !defined(VCMI_MOBILE)
 	// Correct working dir executable folder (not bundle folder) so we can use executable relative paths
 	boost::filesystem::current_path(boost::filesystem::system_complete(argv[0]).parent_path());
@@ -203,68 +218,26 @@ int main(int argc, char * argv[])
 				close(new_socket);
 				continue;
 			}
+			else if (cmd == "move_active_hero_left")
+			{
+				// 1) grab the currently selected (active) hero from the local state
+				const CGHeroInstance* h = GAME->interface()->localState->getCurrentHero();
+				if (!h)
+				{
+					logGlobal->warn("No hero currently selected.");
+				}
+				else
+				{
+					// 2) compute the target vis tile and convert to world coords
+					int3 oldVis = h->visitablePos();
+					int3 newVis { oldVis.x - 1, oldVis.y, oldVis.z };
+					int3 worldDest = h->convertFromVisitablePos(newVis);
 
-			if (cmd == "skip_intro")
-			{
-				logGlobal->info("⏩ Skipping intro video via socket command.");
-				settings.write["video"]["showIntro"].Bool() = false;
-				if (GAME->mainmenu())
-					GAME->mainmenu()->playMusic();
-			}
-			else if (cmd.rfind("load_save ", 0) == 0)
-			{
-				std::string saveName = cmd.substr(10);
-				logGlobal->info("💾 Loading save via socket: %s", saveName.c_str());
-				GAME->server().debugStartTest(saveName, true);
-			}
-			else if (cmd == "move_active_hero_right")
-			{
-				logGlobal->info("⬅️ Moving active hero one tile to the left");
-				// Try to get the active player and hero
-				auto player = GAME->playerInterface()->getActivePlayer();
-				if (player)
-				{
-					auto hero = player->getSelectedHero();
-					if (hero)
-					{
-						// Get current position
-						auto pos = hero->getPosition();
-						int newX = pos.x + 1;
-						int newY = pos.y;
-						// Try to move hero to (newX, newY)
-						// This is a simplified example; actual movement may require pathfinding and command creation
-						// You may need to use ClientCommandManager or send a move command packet
-						ClientCommandManager commandController;
-						std::ostringstream oss;
-						oss << "movehero " << hero->ID << " " << newX << " " << newY;
-						commandController.processCommand(oss.str(), false);
-					}
-					else
-					{
-						logGlobal->warn("No selected hero for active player.");
-					}
-				}
-				else
-				{
-					logGlobal->warn("No active player.");
-				}
-			}
-			else if (cmd.rfind("move_hero ", 0) == 0)
-			{
-				// move_hero <heroName> <x> <y>
-				std::istringstream iss(cmd.substr(10));
-				std::string heroName;
-				int x, y;
-				if (iss >> heroName >> x >> y)
-				{
-					logGlobal->info("🚶 Moving hero %s to (%d,%d)", heroName.c_str(), x, y);
-					// You need to implement or expose a function to move hero by name
-					// Example (pseudo):
-					// GAME->moveHeroByName(heroName, x, y);
-				}
-				else
-				{
-					logGlobal->warn("Invalid move_hero command format.");
+					// 3) send the exact same packet the UI would:
+					//    this enqueues a MoveHero pack (path=[worldDest], heroID=h->id, transit=false)
+					GAME->interface()->cb->moveHero(h, worldDest, /*useTransit=*/false);
+					logGlobal->info("Requested hero move from (%d,%d) to (%d,%d)",
+									oldVis.x, oldVis.y, newVis.x, newVis.y);
 				}
 			}
 			else

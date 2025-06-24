@@ -183,8 +183,5 @@ def battle_loop():
     organize_export_files()
     close_vcmi_process()
 
-for i in range(5):
-    print(f"Starting battle loop iteration {i + 1}...")
-    battle_loop()
-    print(f"Battle loop iteration {i + 1} completed.\n")
-    time.sleep(2)  # Pause between iterations
+
+send_command("move_active_hero_left")
