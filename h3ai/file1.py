@@ -11,6 +11,8 @@ import torch
 import numpy as np
 from runvcmi import open_vcmi_process, control_vcmi_ui, close_vcmi_process
 from paths import EXPORT_DIR, BATTLE_JSON_PATH, ACTIONS_FILE, MODEL_WEIGHTS, MASTER_LOG
+import re
+import shutil
 
 # === CONFIGURATION ===
 SOCKET_PORT = 5000
@@ -66,6 +68,31 @@ def compute_performance(kills: float, losses: float) -> float:
     if total <= 0:
         return 0.0
     return kills / total
+
+def organize_export_files():
+    """
+    Scan EXPORT_DIR for files matching *_<gameid>_*, 
+    create subfolders under EXPORT_DIR if needed,
+    and move them there.
+    """
+    if EXPORT_DIR is None:
+        raise RuntimeError("EXPORT_DIR is not set; call create_export_directory() first")
+
+    pattern = re.compile(r'_(\d+)_')
+    for file in EXPORT_DIR.iterdir():
+        if not file.is_file():
+            continue
+
+        match = pattern.search(file.name)
+        if not match:
+            continue
+
+        game_id = match.group(1)
+        dest_dir = EXPORT_DIR / game_id
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        shutil.move(str(file), str(dest_dir / file.name))
+        print("export files organized")
 
 def battle_loop():
     open_vcmi_process()
@@ -152,7 +179,8 @@ def battle_loop():
     # Increment battle counter after each battle
     global battle_counter
     battle_counter += 1  
-
+    
+    organize_export_files()
     close_vcmi_process()
 
 for i in range(5):
