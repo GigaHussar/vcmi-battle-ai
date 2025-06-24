@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from battle_state_to_tensor import STATE_DIM    # you can also hard-code 2970
-from predictor_helpers    import extract_all_possible_commands
-from model                import ActionEncoder  # or adjust import path if needed
+from torch.distributions import Categorical
+from torch.utils.data import Dataset   
+import pandas as pd
+import numpy as np
+import os
 
 # Map your JSON type IDs → string labels (only 0,1,4,5 used)
 ACTION_TYPE_MAP = {
@@ -20,6 +21,7 @@ N_ACTION_TYPES  = len(ACTION_TYPE_MAP)
 WIDTH_FULL      = 17
 WIDTH_PLAYABLE  = 15
 HEIGHT          = 11
+STATE_DIM       = 2970
 
 def hex_to_coords(hex_id):
     """
@@ -85,66 +87,6 @@ class ActionEncoder(nn.Module):
         # stack into tensor [k, 14]
         return torch.stack(batch, dim=0)
 
-class BattleStateEvaluator(nn.Module):
-    # Embedding layers with safe upper bounds based on game engine specs:
-    # - Creature IDs assumed < 300
-    # - Faction IDs assumed < 15
-    def __init__(self, num_creatures=300, num_factions=15):
-        super().__init__()
-
-        # === EMBEDDINGS ===
-        # Learnable dense representations for categorical unit info
-        self.creature_embed = nn.Embedding(num_creatures, 8)  # creature_id → 8D vector
-        self.faction_embed = nn.Embedding(num_factions, 4)    # faction_id → 4D vector
-
-        # === CONVOLUTIONAL LAYERS ===
-        # Input has 16 raw features + 8 creature emb + 4 faction emb = 28 channels
-        self.conv1 = nn.Conv2d(28, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-
-        # Adaptive average pooling reduces spatial map to [1 x 1]
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
-
-        # Final fully connected layer maps 64 pooled features → single scalar output
-        self.fc = nn.Linear(64, 1)
-
-    def forward(self, features, creature_ids, faction_ids):
-        """
-        Args:
-            features: Tensor [B, 11, 15, 16] - raw battlefield data per tile
-            creature_ids: Tensor [B, 11, 15] - creature class ID per tile
-            faction_ids: Tensor [B, 11, 15] - faction ID per tile
-        Returns:
-            output: Tensor [B, 1] - predicted value for this battlefield state
-        """
-
-        # === EMBEDDING LOOKUP ===
-        # Convert integer IDs into learned feature vectors
-        creature_vecs = self.creature_embed(creature_ids)  # [B, 11, 15, 8]
-        faction_vecs = self.faction_embed(faction_ids)     # [B, 11, 15, 4]
-
-        # === CONCATENATE ALONG LAST DIMENSION ===
-        # Merge raw features and embedded info → [B, 11, 15, 28]
-        x = torch.cat([features, creature_vecs, faction_vecs], dim=-1)
-
-        # === PERMUTE FOR CNN ===
-        # CNN expects [B, C, H, W], so we move channels (28) to second axis
-        x = x.permute(0, 3, 1, 2)  # [B, 28, 11, 15]
-
-        # === CONVOLUTIONAL PROCESSING ===
-        # Two layers of convolution + ReLU to extract spatial/tactical patterns
-        x = F.relu(self.conv1(x))  # [B, 32, 11, 15]
-        x = F.relu(self.conv2(x))  # [B, 64, 11, 15]
-
-        # === GLOBAL POOLING ===
-        # Compress spatial map to a flat vector using average pooling
-        x = self.pool(x)           # [B, 64, 1, 1]
-        x = x.view(x.size(0), -1)  # [B, 64]
-
-        # === FINAL PREDICTION ===
-        # Output a scalar per batch item (e.g. win likelihood or battle value)
-        return self.fc(x)          # [B, 1]
-
 EMBED_DIM = 64   # joint embedding size
 
 class BattleCommandScorer(nn.Module):
@@ -175,7 +117,7 @@ class BattleCommandScorer(nn.Module):
           state_vec:   Tensor [STATE_DIM]
           action_dicts: list of k action‐dicts from extract_all_possible_commands()
         Returns:
-          scores:      Tensor [k] of scalar scores
+          logits:      Tensor [k] of **unnormalized** action-preferences
         """
         # Embed the state once
         s_emb = self.state_net(state_vec)           # [EMBED_DIM]
@@ -192,12 +134,33 @@ class BattleCommandScorer(nn.Module):
 
         return scores
 
-# === Test run ===
-def test_model():
-    model = BattleCommandScorer()
-    dummy_input = torch.rand(10, 18)  # 10 commands with same state vector
-    output = model(dummy_input)
-    print("✅ Output shape:", output.shape)  # should be [10]
-    print("🔢 Scores:", output.detach().numpy())
+class BattleTurnDataset(Dataset):
+    def __init__(self, log_csv_path: str, data_dir: str):
+        # load and drop any incomplete episodes
+        self.df = pd.read_csv(log_csv_path).dropna(subset=["reward"]).reset_index(drop=True)
+        self.data_dir = data_dir
 
-test_model()
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        prefix = row.state_prefix               # e.g. "1624456789_5"
+        # 1) load state tensors and flatten
+        bf = np.load(os.path.join(self.data_dir, f"battlefield_tensor_{prefix}.npy"))
+        cid = np.load(os.path.join(self.data_dir, f"creature_id_tensor_{prefix}.npy"))
+        fid = np.load(os.path.join(self.data_dir, f"faction_id_tensor_{prefix}.npy"))
+        state = np.concatenate([bf.flatten(), cid.flatten(), fid.flatten()]).astype(np.float32)
+        # 2) load action-features matrix [k, F]
+        actions = np.load(os.path.join(self.data_dir, f"action_feats_{prefix}.npy")).astype(np.float32)
+        # 3) load chosen action index
+        chosen_idx = int(open(os.path.join(self.data_dir, f"chosen_idx_{prefix}.txt")).read())
+        # 4) load final reward
+        reward = float(row.reward)
+        # convert to torch
+        return {
+            "state":      torch.from_numpy(state),        # [S]
+            "actions":    torch.from_numpy(actions),      # [k,F]
+            "chosen_idx": torch.tensor(chosen_idx),       # []
+            "reward":     torch.tensor(reward)            # []
+        }

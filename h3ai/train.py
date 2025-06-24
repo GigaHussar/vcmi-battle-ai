@@ -1,70 +1,56 @@
-import os
+# train.py
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import pandas as pd
-import numpy as np
-from model import BattleStateEvaluator
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from model import BattleCommandScorer, BattleTurnDataset
 
-# === CONFIGURATION ===
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-RESULTS_CSV = os.path.join(SCRIPT_DIR, "..", "export", "battle_results.csv")
-TENSOR_DIR = os.path.join(SCRIPT_DIR, "..", "h3ai")
-MODEL_SAVE_PATH = "value_model.pth"
-EPOCHS = 5
-LEARNING_RATE = 1e-3
+# Config
+LOG_CSV  = "export/master_log.csv"
+DATA_DIR = "export"
+BATCH    = 32
+LR       = 1e-4
+EPOCHS   = 5
+SAVE_TO  = "export/model_weights.pth"
 
-def load_tensor_by_game_id(game_id):
-    try:
-        features = np.load(os.path.join(TENSOR_DIR, f"battlefield_tensor_{game_id}.npy"))
-        creature_ids = np.load(os.path.join(TENSOR_DIR, f"creature_id_tensor_{game_id}.npy"))
-        faction_ids = np.load(os.path.join(TENSOR_DIR, f"faction_id_tensor_{game_id}.npy"))
-        return features, creature_ids, faction_ids
-    except Exception as e:
-        print(f"❌ Failed to load tensors for game {game_id}: {e}")
-        return None, None, None
+def collate_fn(batch):
+    # batch is list of dicts with state, actions, chosen_idx, reward
+    states = torch.stack([b["state"] for b in batch])           # [B, S]
+    rewards = torch.stack([b["reward"] for b in batch]).unsqueeze(1)  # [B,1]
+    return states, batch  # pass entire batch list so we can handle variable k
 
 def train():
-    df = pd.read_csv(RESULTS_CSV)
-    model = BattleStateEvaluator()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    loss_fn = nn.MSELoss()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ds  = BattleTurnDataset(LOG_CSV, DATA_DIR)
+    dl  = DataLoader(ds, batch_size=BATCH, shuffle=True, collate_fn=collate_fn)
+    model = BattleCommandScorer().to(device)
+    opt   = torch.optim.Adam(model.parameters(), lr=LR)
 
-    model.train()
-    for epoch in range(EPOCHS):
+    for epoch in range(1, EPOCHS+1):
         total_loss = 0.0
-        count = 0
+        for states, batch in dl:
+            states = states.to(device)
+            rewards = torch.stack([b["reward"] for b in batch]).unsqueeze(1).to(device)
+            # for each example, score its k actions and pick the chosen one
+            preds = []
+            for i, b in enumerate(batch):
+                acts = b["actions"].to(device)                 # [k, F]
+                idx  = b["chosen_idx"].item()
+                # scorer may expect batched states+actions:
+                scores = model(states[i].unsqueeze(0), [acts])[0]  # [k]
+                preds.append(scores[idx].unsqueeze(0))
+            preds = torch.cat(preds).unsqueeze(1)              # [B,1]
 
-        for _, row in df.iterrows():
-            game_id = row["game_id"]
-            performance = float(row["performance"])  # label
-
-            features, creature_ids, faction_ids = load_tensor_by_game_id(game_id)
-            if features is None:
-                continue
-
-            # Add batch dim and convert to tensors
-            xb = torch.tensor(features).unsqueeze(0).float()
-            cid = torch.tensor(creature_ids).unsqueeze(0).long()
-            fid = torch.tensor(faction_ids).unsqueeze(0).long()
-            target = torch.tensor([[performance]], dtype=torch.float32)  # shape [1, 1]
-
-            # Forward + Loss + Backward
-            pred = model(xb, cid, fid)
-            loss = loss_fn(pred, target)
-
-            optimizer.zero_grad()
+            loss = F.mse_loss(preds, rewards)
+            opt.zero_grad()
             loss.backward()
-            optimizer.step()
+            opt.step()
+            total_loss += loss.item() * states.size(0)
 
-            total_loss += loss.item()
-            count += 1
+        avg = total_loss / len(ds)
+        print(f"Epoch {epoch}/{EPOCHS} — avg loss: {avg:.4f}")
 
-        avg_loss = total_loss / max(count, 1)
-        print(f"📚 Epoch {epoch+1}/{EPOCHS} - Avg MSE Loss: {avg_loss:.4f}")
-
-    torch.save(model.state_dict(), MODEL_SAVE_PATH)
-    print(f"✅ Value model saved to {MODEL_SAVE_PATH}")
+    torch.save(model.state_dict(), SAVE_TO)
+    print(f"Model saved to {SAVE_TO}")
 
 if __name__ == "__main__":
     train()
