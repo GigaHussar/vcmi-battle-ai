@@ -135,13 +135,13 @@ int main(int argc, char * argv[])
 	CAndroidVMHelper::initClassloader(SDL_AndroidGetJNIEnv());
 	// boost will crash without this
 	setenv("LANG", "C", 1);
-#endif
-
 #if !defined(VCMI_MOBILE)
 	// Correct working dir executable folder (not bundle folder) so we can use executable relative paths
 	boost::filesystem::current_path(boost::filesystem::system_complete(argv[0]).parent_path());
 #endif
 	std::cout << "Starting... " << std::endl;
+
+	// --- SOCKET SERVER THREAD FOR EXTERNAL COMMANDS ---
 	std::thread([]() {
 		int server_fd, new_socket;
 		struct sockaddr_in address;
@@ -200,17 +200,85 @@ int main(int argc, char * argv[])
 			if (!GAME)
 			{
 				logGlobal->warn("🚫 GAME is null.");
+				close(new_socket);
 				continue;
 			}
 
-			if (!GLOBAL_SOCKET_ACTION_CONTROLLER)
+			if (cmd == "skip_intro")
 			{
-				logGlobal->warn("🚫 GLOBAL_SOCKET_ACTION_CONTROLLER is null.");
-				continue;
+				logGlobal->info("⏩ Skipping intro video via socket command.");
+				settings.write["video"]["showIntro"].Bool() = false;
+				if (GAME->mainmenu())
+					GAME->mainmenu()->playMusic();
 			}
-
-			logGlobal->info("🎯 Sending command to controller directly.");
-			GLOBAL_SOCKET_ACTION_CONTROLLER->performSocketCommand(cmd);
+			else if (cmd.rfind("load_save ", 0) == 0)
+			{
+				std::string saveName = cmd.substr(10);
+				logGlobal->info("💾 Loading save via socket: %s", saveName.c_str());
+				GAME->server().debugStartTest(saveName, true);
+			}
+			else if (cmd == "move_active_hero_right")
+			{
+				logGlobal->info("⬅️ Moving active hero one tile to the left");
+				// Try to get the active player and hero
+				auto player = GAME->playerInterface()->getActivePlayer();
+				if (player)
+				{
+					auto hero = player->getSelectedHero();
+					if (hero)
+					{
+						// Get current position
+						auto pos = hero->getPosition();
+						int newX = pos.x + 1;
+						int newY = pos.y;
+						// Try to move hero to (newX, newY)
+						// This is a simplified example; actual movement may require pathfinding and command creation
+						// You may need to use ClientCommandManager or send a move command packet
+						ClientCommandManager commandController;
+						std::ostringstream oss;
+						oss << "movehero " << hero->ID << " " << newX << " " << newY;
+						commandController.processCommand(oss.str(), false);
+					}
+					else
+					{
+						logGlobal->warn("No selected hero for active player.");
+					}
+				}
+				else
+				{
+					logGlobal->warn("No active player.");
+				}
+			}
+			else if (cmd.rfind("move_hero ", 0) == 0)
+			{
+				// move_hero <heroName> <x> <y>
+				std::istringstream iss(cmd.substr(10));
+				std::string heroName;
+				int x, y;
+				if (iss >> heroName >> x >> y)
+				{
+					logGlobal->info("🚶 Moving hero %s to (%d,%d)", heroName.c_str(), x, y);
+					// You need to implement or expose a function to move hero by name
+					// Example (pseudo):
+					// GAME->moveHeroByName(heroName, x, y);
+				}
+				else
+				{
+					logGlobal->warn("Invalid move_hero command format.");
+				}
+			}
+			else
+			{
+				if (GLOBAL_SOCKET_ACTION_CONTROLLER)
+				{
+					logGlobal->info("🎯 Sending command to controller directly.");
+					GLOBAL_SOCKET_ACTION_CONTROLLER->performSocketCommand(cmd);
+				}
+				else
+				{
+					logGlobal->warn("🚫 GLOBAL_SOCKET_ACTION_CONTROLLER is null.");
+				}
+			}
 
 			close(new_socket);
 		}
