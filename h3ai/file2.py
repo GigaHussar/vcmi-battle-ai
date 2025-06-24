@@ -212,9 +212,9 @@ def save_battle_state_to_tensors(game_id: str, base_path: Path):
     tensor, creature_ids, faction_ids = encode_battle_state_from_json(battle_data)
 
     # npy outputs
-    np.save(H3AI_DIR / f"battlefield_tensor_{game_id}.npy", tensor)
-    np.save(H3AI_DIR / f"creature_id_tensor_{game_id}.npy", creature_ids)
-    np.save(H3AI_DIR / f"faction_id_tensor_{game_id}.npy", faction_ids)
+    np.save(EXPORT_DIR / f"battlefield_tensor_{game_id}.npy", tensor)
+    np.save(EXPORT_DIR / f"creature_id_tensor_{game_id}.npy", creature_ids)
+    np.save(EXPORT_DIR / f"faction_id_tensor_{game_id}.npy", faction_ids)
     logger.info(f"Saved .npy tensors with game_id={game_id}")
 
     # CSV inspection
@@ -227,7 +227,7 @@ def save_action_tensor(game_id: str, turn: int, action_dicts: list[dict], out_di
     # action_dicts is the list you got from extract_all_possible_commands(...)
     enc = ActionEncoder()
     # enc returns a torch.Tensor of shape [k, feature_dim] (e.g. [k,14])
-    action_tensor = enc(action_dicts).cpu().numpy()
+    action_tensor = enc(action_dicts).detach().cpu().numpy()
     out_path = out_dir / f"action_feats_{game_id}_{turn}.npy"
     np.save(out_path, action_tensor)
     return out_path

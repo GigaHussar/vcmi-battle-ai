@@ -13,9 +13,12 @@ ACTION_TYPE_MAP = {
     4: "move",
     5: "melee",
 }
-# Invert for embedding lookup
-ACTION_TYPE_IDS = {v: k for k, v in ACTION_TYPE_MAP.items()}
-N_ACTION_TYPES  = len(ACTION_TYPE_MAP)
+
+# Map your JSON type string labels to contiguous indices for embedding
+ACTION_TYPE_LABELS = ["defend", "wait", "move", "melee"]
+ACTION_LABEL_TO_IDX = {label: i for i, label in enumerate(ACTION_TYPE_LABELS)}  # {"defend":0, "wait":1, ...}
+IDX_TO_ACTION_LABEL = {i: label for label, i in ACTION_LABEL_TO_IDX.items()}
+N_ACTION_TYPES = len(ACTION_TYPE_LABELS)
 
 # Board geometry for normalizing coords
 WIDTH_FULL      = 17
@@ -72,9 +75,9 @@ class ActionEncoder(nn.Module):
         batch = []
         for a in action_dicts:
             # 1) look up the integer ID of the action type
-            t_idx = ACTION_TYPE_IDS[a["type"]]
+            t_idx = ACTION_LABEL_TO_IDX[a['type']]
             # 2) embed into a vector of size type_emb_dim
-            e_t   = self.type_emb(torch.tensor(t_idx))
+            e_t = self.type_emb(torch.tensor(t_idx, dtype=torch.long, device=self.type_emb.weight.device))
 
             # 3) encode first hex (move target or melee approach)
             f1 = encode_hex_field(a.get("hex1", -1))

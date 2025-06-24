@@ -100,7 +100,7 @@ def battle_loop():
         current_turn = actions_data.get("turn", -1)
 
         # 1. get candidate actions
-        action_dicts = extract_all_possible_commands(state)
+        action_dicts = extract_all_possible_commands(actions_data)
 
         # 2. encode and score them
         scores = BattleCommandScorer()(state_vec, action_dicts)
