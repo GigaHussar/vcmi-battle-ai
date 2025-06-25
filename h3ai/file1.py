@@ -178,9 +178,6 @@ def battle_loop():
     else:
         print("⚠️ Could not read final state.")
 
-    # Increment battle counter after each battle
-    global battle_counter
-    battle_counter += 1  
     organize_export_files()
     close_vcmi_process()
     time.sleep(1)
