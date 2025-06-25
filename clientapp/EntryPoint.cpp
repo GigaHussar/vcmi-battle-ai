@@ -65,6 +65,10 @@
 // The callback interface that packages and sends MoveHero packets
 #include "../lib/callback/CCallback.h"
 
+#include "mainmenu/CMainMenu.h"             // for CMainMenu::openLobby
+#include "lobby/CSelectionBase.h" // for ESelectionScreen
+#include "lobby/CLobbyScreen.h"   // for ELoadMode
+
 
 #ifdef VCMI_ANDROID
 #include "../lib/CAndroidVMHelper.h"
@@ -239,6 +243,63 @@ int main(int argc, char * argv[])
 					logGlobal->info("Requested hero move from (%d,%d) to (%d,%d)",
 									oldVis.x, oldVis.y, newVis.x, newVis.y);
 				}
+			}
+			// Move the active hero one tile to the right
+			else if (cmd == "move_active_hero_right")
+			{
+				// 1) grab the currently selected hero
+				const CGHeroInstance* h = GAME->interface()->localState->getCurrentHero();
+				if (!h)
+				{
+					logGlobal->warn("No hero currently selected.");
+					close(new_socket);
+					continue;
+				}
+
+				// 2) compute current and target visitable‐tile coords
+				int3 oldVis = h->visitablePos();
+				int3 newVis{ oldVis.x + 1, oldVis.y, oldVis.z };
+
+				// 3) convert that to world coords
+				int3 worldDest = h->convertFromVisitablePos(newVis);
+
+				// 4) send the MoveHero packet (false = foot move)
+				GAME->interface()->cb->moveHero(h, worldDest, /*useTransit=*/false);
+
+				logGlobal->info("Socket: moved hero from (%d,%d) to (%d,%d)",
+								oldVis.x, oldVis.y,
+								newVis.x, newVis.y);
+
+				close(new_socket);
+				continue;
+			}
+			else if (cmd == "open_load_menu")
+			{
+				logGlobal->info("Socket: opening Load Game menu");
+
+				// 2) Call the exact same method your “Load” button invokes:
+				CMainMenu::openLobby(
+					ESelectionScreen::loadGame,  // the “Load Game” screen
+					true,                        // host locally
+					{},                          // no player names needed
+					ELoadMode::SINGLE            // single‐player load mode
+				);
+
+				close(new_socket);
+				continue;
+			}
+			else if (cmd == "lobby_accept")
+			{
+				logGlobal->info("Socket: simulating Enter on Load-Game");
+
+				// exactly what the Load button/Enter key does:
+				if (GAME->server().validateGameStart(false))
+					GAME->server().sendStartGame(false);
+				else
+					logGlobal->warn("Load-Game validation failed");
+
+				close(new_socket);
+				continue;
 			}
 			else
 			{

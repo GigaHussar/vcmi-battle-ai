@@ -3,6 +3,21 @@ import subprocess
 import time
 import subprocess as sp
 
+# Socket command list for VCMI EntryPoint:
+#
+# move_active_hero_left
+#     Moves the currently selected hero one tile to the west.
+#
+# move_active_hero_right
+#     Moves the currently selected hero one tile to the east.
+#
+# open_load_menu
+#     Opens the “Load Game” screen from the main menu.
+#
+# lobby_accept
+#     Simulates pressing Enter on the Load Game screen, triggering the load of the currently selected save.
+#
+
 VCMI_BINARY = "/Users/syntaxerror/vcmi/build/bin/vcmiclient"
 vcmi_process = None  # Global reference to the process
 
@@ -24,55 +39,6 @@ def open_vcmi_process():
     except Exception as e:
         print(f"Failed to open VCMI process: {e}")
         return None
-
-def control_vcmi_ui():
-    """
-    Automates UI keypresses to load a scenario in VCMI.
-    Assumes VCMI is already running.
-    """
-    print("Waiting to skip intro video...")
-    time.sleep(3)
-
-    try:
-        sp.run(["osascript", "-e", 'tell application "System Events" to key code 36'])  # Return
-        print("Sent Return key to skip intro video.")
-    except Exception as e:
-        print(f"Failed to send Return key: {e}")
-
-    print("Waiting for main menu...")
-    time.sleep(5)
-
-    try:
-        sp.run(["osascript", "-e", 'tell application "System Events" to keystroke "l"'])
-        print("Sent 'l' to open Load Game menu.")
-    except Exception as e:
-        print(f"Failed to send 'l' key: {e}")
-
-    time.sleep(3)
-
-    try:
-        sp.run(["osascript", "-e", 'tell application "System Events" to keystroke "s"'])
-        print("Sent 's' to select single scenario.")
-    except Exception as e:
-        print(f"Failed to send 's' key: {e}")
-
-    time.sleep(2)
-
-    try:
-        sp.run(["osascript", "-e", 'tell application "System Events" to key code 36'])  # Return
-        print("Pressed Return to confirm selection.")
-    except Exception as e:
-        print(f"Failed to send Return key: {e}")
-
-    time.sleep(5)
-
-    try:
-        sp.run(["osascript", "-e", 'tell application "System Events" to key code 124'])  # Right Arrow
-        print("Pressed Right Arrow to move hero.")
-    except Exception as e:
-        print(f"Failed to send Right Arrow key: {e}")
-    
-    time.sleep(5)
 
 def close_vcmi_process():
     """

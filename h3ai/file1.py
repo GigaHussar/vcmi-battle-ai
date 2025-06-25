@@ -183,5 +183,9 @@ def battle_loop():
     organize_export_files()
     close_vcmi_process()
 
-
-send_command("move_active_hero_left")
+open_vcmi_process()
+time.sleep(3)
+send_command("open_load_menu")
+time.sleep(1)
+send_command("lobby_accept")
+send_command("move_active_hero_right")
