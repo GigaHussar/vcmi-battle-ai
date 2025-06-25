@@ -1,11 +1,8 @@
-import os
 import json
 import socket
 import time
-import csv
 from pathlib import Path
-from file2 import encode_battle_state_from_json, fill_battle_rewards, log_turn_to_csv, predict_best_command, save_battle_state_to_tensors, save_action_tensor, save_chosen_index, extract_all_possible_commands
-from torch.distributions import Categorical
+from file2 import encode_battle_state_from_json, fill_battle_rewards, log_turn_to_csv, save_battle_state_to_tensors, save_action_tensor, save_chosen_index, extract_all_possible_commands
 from model import ActionEncoder, CompatibilityScorer, ActionProjector, StateEncoder, STATE_DIM, EMBED_DIM, FEATURE_DIM
 import torch
 import numpy as np
@@ -107,7 +104,6 @@ def battle_loop():
     last_turn = -1
     initial_attacker_strength = None
     initial_defender_strength = None
-    prev_att_str = prev_def_str = None
     game_id = int(time.time())
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

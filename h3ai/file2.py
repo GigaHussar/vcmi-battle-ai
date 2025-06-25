@@ -4,9 +4,9 @@ from pathlib import Path
 import pandas as pd
 import logging
 import torch
-from model import BattleCommandScorer, ActionEncoder
+from model import ActionEncoder
 import csv
-from paths import ACTIONS_FILE, MODEL_WEIGHTS, MASTER_LOG, BASE_PATH, EXPORT_DIR, H3AI_DIR, BATTLE_JSON_PATH
+from paths import MASTER_LOG, BASE_PATH, EXPORT_DIR, H3AI_DIR, BATTLE_JSON_PATH
 
 
 logging.basicConfig(level=logging.INFO)
