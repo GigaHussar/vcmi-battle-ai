@@ -1,56 +1,123 @@
-# train.py
+import argparse
 import torch
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from model import BattleCommandScorer, BattleTurnDataset
+from torch.utils.data import DataLoader, random_split
+import torch.nn as nn
+import torch.optim as optim
+from torch.nn.utils.rnn import pad_sequence
 
-# Config
-LOG_CSV  = "export/master_log.csv"
-DATA_DIR = "export"
-BATCH    = 32
-LR       = 1e-4
-EPOCHS   = 5
-SAVE_TO  = "export/model_weights.pth"
+from model import BattleCommandScorer, BattleTurnDataset
+from paths import MASTER_LOG, EXPORT_DIR, MODEL_WEIGHTS
 
 def collate_fn(batch):
-    # batch is list of dicts with state, actions, chosen_idx, reward
-    states = torch.stack([b["state"] for b in batch])           # [B, S]
-    rewards = torch.stack([b["reward"] for b in batch]).unsqueeze(1)  # [B,1]
-    return states, batch  # pass entire batch list so we can handle variable k
+    # batch is a list of dicts: 'state', 'actions', 'chosen_idx'
+    states = [item['state'] for item in batch]
+    actions = [item['actions'] for item in batch]
+    targets = torch.tensor([item['chosen_idx'] for item in batch], dtype=torch.long)
 
-def train():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ds  = BattleTurnDataset(LOG_CSV, DATA_DIR)
-    dl  = DataLoader(ds, batch_size=BATCH, shuffle=True, collate_fn=collate_fn)
+    # Pad sequences to the same length (batch first)
+    states_padded = pad_sequence(states, batch_first=True, padding_value=0)
+    actions_padded = pad_sequence(actions, batch_first=True, padding_value=0)
+    
+    return {
+        'state': states_padded,
+        'actions': actions_padded,
+        'chosen_idx': targets,
+    }
+
+
+def train(
+    log_csv: str,
+    data_dir: str,
+    output_path: str,
+    epochs: int = 10,
+    batch_size: int = 32,
+    lr: float = 1e-3,
+    val_split: float = 0.2,
+    device: str = None,
+):
+    # Device setup
+    device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    # Dataset and split
+    dataset = BattleTurnDataset(log_csv, data_dir)
+    n_val = int(len(dataset) * val_split)
+    n_train = len(dataset) - n_val
+    train_ds, val_ds = random_split(dataset, [n_train, n_val])
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=collate_fn,
+    )
+
+    # Model, loss, optimizer
     model = BattleCommandScorer().to(device)
-    opt   = torch.optim.Adam(model.parameters(), lr=LR)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    for epoch in range(1, EPOCHS+1):
+    best_val_loss = float('inf')
+    for epoch in range(1, epochs + 1):
+        # Training
+        model.train()
         total_loss = 0.0
-        for states, batch in dl:
-            states = states.to(device)
-            rewards = torch.stack([b["reward"] for b in batch]).unsqueeze(1).to(device)
-            # for each example, score its k actions and pick the chosen one
-            preds = []
-            for i, b in enumerate(batch):
-                acts = b["actions"].to(device)                 # [k, F]
-                idx  = b["chosen_idx"].item()
-                # scorer may expect batched states+actions:
-                scores = model(states[i].unsqueeze(0), [acts])[0]  # [k]
-                preds.append(scores[idx].unsqueeze(0))
-            preds = torch.cat(preds).unsqueeze(1)              # [B,1]
+        for batch in train_loader:
+            states = batch['state'].to(device)
+            actions = batch['actions'].to(device)
+            targets = batch['chosen_idx'].to(device)
 
-            loss = F.mse_loss(preds, rewards)
-            opt.zero_grad()
+            scores = model(states, actions)
+            loss = criterion(scores, targets)
+
+            optimizer.zero_grad()
             loss.backward()
-            opt.step()
+            optimizer.step()
             total_loss += loss.item() * states.size(0)
+        avg_train_loss = total_loss / len(train_loader.dataset)
 
-        avg = total_loss / len(ds)
-        print(f"Epoch {epoch}/{EPOCHS} — avg loss: {avg:.4f}")
+        # Validation
+        model.eval()
+        total_val_loss = 0.0
+        with torch.no_grad():
+            for batch in val_loader:
+                states = batch['state'].to(device)
+                actions = batch['actions'].to(device)
+                targets = batch['chosen_idx'].to(device)
+                scores = model(states, actions)
+                loss = criterion(scores, targets)
+                total_val_loss += loss.item() * states.size(0)
+        avg_val_loss = total_val_loss / len(val_loader.dataset)
 
-    torch.save(model.state_dict(), SAVE_TO)
-    print(f"Model saved to {SAVE_TO}")
+        print(f"Epoch {epoch}/{epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
+
+        # Save best model
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(model.state_dict(), output_path)
+            print(f"Saved best model to {output_path}")
 
 if __name__ == "__main__":
-    train()
+    parser = argparse.ArgumentParser(description="Train BattleCommandScorer on collected data.")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for training")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--val-split", type=float, default=0.2, help="Fraction of data for validation")
+    parser.add_argument("--device", type=str, default=None, help="Compute device (e.g. 'cpu' or 'cuda')")
+    args = parser.parse_args()
+
+    train(
+        log_csv=str(MASTER_LOG),
+        data_dir=str(EXPORT_DIR),
+        output_path=str(MODEL_WEIGHTS),
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        val_split=args.val_split,
+        device=args.device,
+    )
+

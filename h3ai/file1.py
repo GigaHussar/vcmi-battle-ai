@@ -6,19 +6,18 @@ import csv
 from pathlib import Path
 from file2 import encode_battle_state_from_json, fill_battle_rewards, log_turn_to_csv, predict_best_command, save_battle_state_to_tensors, save_action_tensor, save_chosen_index, extract_all_possible_commands
 from torch.distributions import Categorical
-from model import ActionEncoder, BattleCommandScorer
+from model import BattleCommandScorer
 import torch
 import numpy as np
-from runvcmi import open_vcmi_process, control_vcmi_ui, close_vcmi_process
-from paths import EXPORT_DIR, BATTLE_JSON_PATH, ACTIONS_FILE, MODEL_WEIGHTS, MASTER_LOG
+from runvcmi import open_vcmi_process, close_vcmi_process
+from paths import EXPORT_DIR, BATTLE_JSON_PATH, ACTIONS_FILE, MASTER_LOG
 import re
 import shutil
 
 # === CONFIGURATION ===
 SOCKET_PORT = 5000
 SOCKET_HOST = "localhost"
-CHECK_INTERVAL = 1.5
-battle_counter = 0
+CHECK_INTERVAL = 2
 
 def format_command_for_vcmi(action: dict) -> str:
     """
@@ -92,13 +91,17 @@ def organize_export_files():
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         shutil.move(str(file), str(dest_dir / file.name))
-        print("export files organized")
 
 def battle_loop():
     open_vcmi_process()
-    control_vcmi_ui()
-    time.sleep(2)
-    
+    time.sleep(3)
+    send_command("open_load_menu")
+    time.sleep(1)
+    send_command("lobby_accept")
+    time.sleep(1)
+    send_command("move_active_hero_right")
+    time.sleep(1)
+
     print("🧠 Agent started. Waiting for battle to begin...")
     current_turn = 0
     last_turn = -1
@@ -122,23 +125,22 @@ def battle_loop():
             np.concatenate([feats.flatten(), c_ids.flatten(), f_ids.flatten()])
         ).float()
 
-        save_battle_state_to_tensors(f"{game_id}_{current_turn}", EXPORT_DIR)
-
         current_turn = actions_data.get("turn", -1)
 
         # 1. get candidate actions
         action_dicts = extract_all_possible_commands(actions_data)
 
         # 2. encode and score them
+        # 2. encode and score them
         scores = BattleCommandScorer()(state_vec, action_dicts)
-        chosen_idx = int(scores.argmax().item())
-
+        if action_dicts:
+            chosen_idx = int(scores.argmax().item())
+        else:
+            chosen_idx = None
         # 3. save them *after* you’ve computed both names
+        save_battle_state_to_tensors(f"{game_id}_{current_turn}", EXPORT_DIR)
         save_action_tensor(game_id, current_turn, action_dicts, EXPORT_DIR)
-        save_chosen_index(game_id, current_turn, chosen_idx, EXPORT_DIR)
-        log_turn_to_csv(game_id, current_turn)
-
-        if chosen_idx is not None:
+        if action_dicts:
             send_command(format_command_for_vcmi(action_dicts[chosen_idx]))
         else:
             print("⚠️ No valid command predicted; skipping this turn.")
@@ -179,13 +181,10 @@ def battle_loop():
     # Increment battle counter after each battle
     global battle_counter
     battle_counter += 1  
-    
     organize_export_files()
     close_vcmi_process()
-
-open_vcmi_process()
-time.sleep(3)
-send_command("open_load_menu")
-time.sleep(1)
-send_command("lobby_accept")
-send_command("move_active_hero_right")
+    time.sleep(1)
+# Run a single battle loop; change 'num_battles' to run multiple battles
+num_battles = 1
+for i in range(num_battles):
+    battle_loop()
