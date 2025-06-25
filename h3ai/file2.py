@@ -32,18 +32,6 @@ ACTION_TYPE_MAP = {
     # 6 is now ignored
 }
 
-
-# 1) Instantiate model on your chosen device, load weights, and set eval mode
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = BattleCommandScorer().to(device)
-if MODEL_WEIGHTS.exists():
-    model.load_state_dict(torch.load(MODEL_WEIGHTS, map_location=device), strict=False)
-model.eval()
-
-# 2) Instantiate your action encoder on the same device
-action_encoder = ActionEncoder().to(device)
-action_encoder.eval()
-
 def extract_all_possible_commands(actions_data):
     """
     Parses possible_actions.json and returns a list of structured commands:
@@ -87,38 +75,6 @@ def extract_all_possible_commands(actions_data):
                     })
 
     return commands
-
-def predict_best_command():
-    # 1) State → vector [1, S]
-    state_json = json.loads(BATTLE_JSON_PATH.read_text())
-    feats, c_ids, f_ids = encode_battle_state_from_json(state_json)
-    state_vec = torch.from_numpy(
-        np.concatenate([feats.flatten(), c_ids.flatten(), f_ids.flatten()])
-    ).float().unsqueeze(0).to(device)  # [1, S]
-
-    # 2) Raw actions
-    actions_data = json.loads(ACTIONS_FILE.read_text())
-    action_dicts = extract_all_possible_commands(actions_data)
-    if not action_dicts:
-        print("⚠️ No legal actions.")
-        return None
-
-    # 3) Encode them to [K,14]
-    with torch.no_grad():
-        action_feats = ActionEncoder(action_dicts)              # [K, 14]
-        action_feats = action_feats.unsqueeze(0).to(device)      # [1, K, 14]
-
-        # 4) Score → [1, K]
-        scores = model(state_vec, action_feats)                  # [1, K]
-        scores = scores.squeeze(0)                               # [K]
-
-    # 5) Pick best
-    best_idx = scores.argmax().item()
-    best_score = scores[best_idx].item()
-    chosen = action_dicts[best_idx]
-
-    print(f"🧠 Model chose: {chosen}  (score: {best_score:.4f})")
-    return chosen
     
 # Normalize morale and luck
 def normalize_stat(val: float, low: float = -3, high: float = +3) -> float:

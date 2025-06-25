@@ -6,11 +6,11 @@ import csv
 from pathlib import Path
 from file2 import encode_battle_state_from_json, fill_battle_rewards, log_turn_to_csv, predict_best_command, save_battle_state_to_tensors, save_action_tensor, save_chosen_index, extract_all_possible_commands
 from torch.distributions import Categorical
-from model import BattleCommandScorer
+from model import ActionEncoder, CompatibilityScorer, ActionProjector, StateEncoder, STATE_DIM, EMBED_DIM, FEATURE_DIM
 import torch
 import numpy as np
 from runvcmi import open_vcmi_process, close_vcmi_process
-from paths import EXPORT_DIR, BATTLE_JSON_PATH, ACTIONS_FILE, MASTER_LOG
+from paths import MODEL_WEIGHTS, EXPORT_DIR, BATTLE_JSON_PATH, ACTIONS_FILE, MASTER_LOG
 import re
 import shutil
 
@@ -110,36 +110,66 @@ def battle_loop():
     prev_att_str = prev_def_str = None
     game_id = int(time.time())
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    state_encoder = StateEncoder(STATE_DIM, EMBED_DIM).to(device)
+    action_encoder = ActionEncoder().to(device)
+    action_projector = ActionProjector(FEATURE_DIM, EMBED_DIM).to(device)
+    scorer = CompatibilityScorer().to(device)
+    scorer.load_state_dict(torch.load(MODEL_WEIGHTS, map_location=device))
+    scorer.eval()
+
     print("starting battle loop...")
     while True:
-        state = read_json(BATTLE_JSON_PATH)
-        actions_data = read_json(ACTIONS_FILE)
+        state = read_json(BATTLE_JSON_PATH)     # dict with current battle state, or None if missing
+        actions_data = read_json(ACTIONS_FILE)  # dict listing possible commands, turn number, etc.
 
         if not state or not actions_data:
             print("⏳ Waiting for battle state...")
             time.sleep(CHECK_INTERVAL)
             continue
-        
+
+        #    Convert JSON state into feature arrays
+        #    encode_battle_state_from_json returns:
+        #      feats: 2D array of state features
+        #      c_ids: IDs for creatures
+        #      f_ids: IDs for features
         feats, c_ids, f_ids = encode_battle_state_from_json(state)
+        #    Build a single flat state vector for the model
+        #    - Flatten each array and concatenate into one 1D numpy array
+        #    - Convert to a PyTorch float tensor
         state_vec = torch.from_numpy(
             np.concatenate([feats.flatten(), c_ids.flatten(), f_ids.flatten()])
-        ).float()
+        ).float().unsqueeze(0).to(device) # shape: (state_dim,)
+
+        s_emb = state_encoder(state_vec)  # (1, EMBED_DIM)
 
         current_turn = actions_data.get("turn", -1)
 
-        # 1. get candidate actions
+        #    Extract candidate actions as list of dicts
+        #    Each dict has keys like 'type', 'hex1', 'hex2'
         action_dicts = extract_all_possible_commands(actions_data)
 
-        # 2. encode and score them
-        # 2. encode and score them
-        scores = BattleCommandScorer()(state_vec, action_dicts)
+        # Turn the list of raw action dicts into a [1, num_actions, FEATURE_DIM] tensor
+        action_feats = ActionEncoder(action_dicts)          # → [num_actions, FEATURE_DIM]
+        action_feats = action_feats.unsqueeze(0).to(device)  # → [1, num_actions, FEATURE_DIM]
+        
+        a_emb = action_projector(action_feats)            # (1, K, EMBED_DIM)
+
+        # Score actions using the pre-loaded model
+        scores = scorer(s_emb, a_emb)  # shape: (1, num_actions)
+
+        # Choose the best action (highest score)
         if action_dicts:
+            # .argmax finds index of max score; .item() turns tensor->Python int
             chosen_idx = int(scores.argmax().item())
         else:
             chosen_idx = None
+
         # 3. save them *after* you’ve computed both names
+        save_chosen_index(game_id, current_turn, chosen_idx, EXPORT_DIR)
         save_battle_state_to_tensors(f"{game_id}_{current_turn}", EXPORT_DIR)
         save_action_tensor(game_id, current_turn, action_dicts, EXPORT_DIR)
+        log_turn_to_csv(game_id, current_turn)
         if action_dicts:
             send_command(format_command_for_vcmi(action_dicts[chosen_idx]))
         else:
@@ -162,11 +192,9 @@ def battle_loop():
     if state:
         final_attacker_strength, final_defender_strength = get_army_strengths(state)
 
-        # compute raw kills & losses
+        # compute raw kills & losses and performance
         kills   = initial_defender_strength - final_defender_strength
         losses  = initial_attacker_strength - final_attacker_strength
-
-        # new “performance” metric
         performance = compute_performance(kills, losses)
 
         print("📊 Final Result:")
@@ -181,6 +209,7 @@ def battle_loop():
     organize_export_files()
     close_vcmi_process()
     time.sleep(1)
+
 # Run a single battle loop; change 'num_battles' to run multiple battles
 num_battles = 1
 for i in range(num_battles):

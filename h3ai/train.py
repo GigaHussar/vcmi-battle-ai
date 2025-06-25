@@ -4,8 +4,10 @@ from torch.utils.data import DataLoader, random_split
 import torch.nn as nn
 import torch.optim as optim
 from torch.nn.utils.rnn import pad_sequence
+from model import StateEncoder, ActionEncoder, ActionProjector, STATE_DIM, EMBED_DIM,FEATURE_DIM
 
-from model import BattleCommandScorer, BattleTurnDataset
+
+from model import CompatibilityScorer, BattleTurnDataset
 from paths import MASTER_LOG, EXPORT_DIR, MODEL_WEIGHTS
 
 def collate_fn(batch):
@@ -24,6 +26,20 @@ def collate_fn(batch):
         'chosen_idx': targets,
     }
 
+# Compose the four modules into one training model
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+state_enc     = StateEncoder(STATE_DIM, EMBED_DIM).to(device)
+action_enc    = ActionEncoder().to(device)
+action_proj   = ActionProjector(FEATURE_DIM, EMBED_DIM).to(device)
+compat_scorer = CompatibilityScorer().to(device)
+
+def model(state_vec, action_dicts):
+    # forward pass for training
+    s_emb = state_enc(state_vec)
+    raw_feats = action_enc(action_dicts)
+    feats_b = raw_feats.unsqueeze(0).to(device)
+    a_emb = action_proj(feats_b)
+    return compat_scorer(s_emb, a_emb)
 
 def train(
     log_csv: str,
@@ -57,7 +73,6 @@ def train(
     )
 
     # Model, loss, optimizer
-    model = BattleCommandScorer().to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
