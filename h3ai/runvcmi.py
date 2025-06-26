@@ -2,6 +2,7 @@ import os
 import subprocess
 import time
 import subprocess as sp
+from paths import VCMI_BINARY
 
 # Socket command list for VCMI EntryPoint:
 #
@@ -18,7 +19,6 @@ import subprocess as sp
 #     Simulates pressing Enter on the Load Game screen, triggering the load of the currently selected save.
 #
 
-VCMI_BINARY = "/Users/syntaxerror/vcmi/build/bin/vcmiclient"
 vcmi_process = None  # Global reference to the process
 
 def open_vcmi_process():

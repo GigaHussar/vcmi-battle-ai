@@ -146,7 +146,7 @@ def battle_loop():
         action_dicts = extract_all_possible_commands(actions_data)
 
         # Turn the list of raw action dicts into a [1, num_actions, FEATURE_DIM] tensor
-        action_feats = ActionEncoder(action_dicts)          # → [num_actions, FEATURE_DIM]
+        action_feats = action_encoder(action_dicts)          # → [num_actions, FEATURE_DIM]
         action_feats = action_feats.unsqueeze(0).to(device)  # → [1, num_actions, FEATURE_DIM]
         
         a_emb = action_projector(action_feats)            # (1, K, EMBED_DIM)
