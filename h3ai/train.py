@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader, random_split
 import torch.nn as nn
 import torch.optim as optim
 from torch.nn.utils.rnn import pad_sequence
-from model import StateEncoder, ActionEncoder, ActionProjector, STATE_DIM, EMBED_DIM,FEATURE_DIM
+from model import StateEncoder, ActionEncoder, ActionProjector, BattleCommandScorer, STATE_DIM, EMBED_DIM,FEATURE_DIM
 
 
 from model import CompatibilityScorer, BattleTurnDataset
@@ -15,6 +15,7 @@ def collate_fn(batch):
     states = [item['state'] for item in batch]
     actions = [item['actions'] for item in batch]
     targets = torch.tensor([item['chosen_idx'] for item in batch], dtype=torch.long)
+    rewards = torch.tensor([item['reward'] for item in batch], dtype=torch.float)
 
     # Pad sequences to the same length (batch first)
     states_padded = pad_sequence(states, batch_first=True, padding_value=0)
@@ -24,6 +25,7 @@ def collate_fn(batch):
         'state': states_padded,
         'actions': actions_padded,
         'chosen_idx': targets,
+        'reward': rewards,
     }
 
 # Compose the four modules into one training model
@@ -31,15 +33,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 state_enc     = StateEncoder(STATE_DIM, EMBED_DIM).to(device)
 action_enc    = ActionEncoder().to(device)
 action_proj   = ActionProjector(FEATURE_DIM, EMBED_DIM).to(device)
-compat_scorer = CompatibilityScorer().to(device)
-
-def model(state_vec, action_dicts):
-    # forward pass for training
-    s_emb = state_enc(state_vec)
-    raw_feats = action_enc(action_dicts)
-    feats_b = raw_feats.unsqueeze(0).to(device)
-    a_emb = action_proj(feats_b)
-    return compat_scorer(s_emb, a_emb)
+scorer = CompatibilityScorer().to(device)
+model = BattleCommandScorer(state_enc, action_enc, action_proj, scorer).to(device)
 
 def train(
     log_csv: str,
@@ -73,7 +68,7 @@ def train(
     )
 
     # Model, loss, optimizer
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     best_val_loss = float('inf')
@@ -82,18 +77,27 @@ def train(
         model.train()
         total_loss = 0.0
         for batch in train_loader:
-            states = batch['state'].to(device)
-            actions = batch['actions'].to(device)
-            targets = batch['chosen_idx'].to(device)
-
-            scores = model(states, actions)
-            loss = criterion(scores, targets)
+            states     = batch['state'].to(device)
+            actions    = batch['actions'].to(device)
+            chosen_idx = batch['chosen_idx'] .to(device)
+            reward     = batch['reward']    .to(device)
 
             optimizer.zero_grad()
+
+            # a) score every (state,action) pair → [B, num_actions]
+            scores = model(states, actions)
+
+            # b) extract the *one* predicted score for the action actually taken → [B]
+            pred_score = scores.gather(1, chosen_idx.unsqueeze(1)).squeeze(1)
+
+            # c) MSE against the real performance label
+            loss = criterion(pred_score, reward)
+
+            # d) backprop all weights
             loss.backward()
             optimizer.step()
+
             total_loss += loss.item() * states.size(0)
-        avg_train_loss = total_loss / len(train_loader.dataset)
 
         # Validation
         model.eval()
@@ -108,7 +112,7 @@ def train(
                 total_val_loss += loss.item() * states.size(0)
         avg_val_loss = total_val_loss / len(val_loader.dataset)
 
-        print(f"Epoch {epoch}/{epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
+        print(f"Epoch {epoch}/{epochs} - Total Loss: {total_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
 
         # Save best model
         if avg_val_loss < best_val_loss:

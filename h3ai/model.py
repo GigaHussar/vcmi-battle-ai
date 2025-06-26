@@ -174,6 +174,36 @@ class CompatibilityScorer(nn.Module):
             scores = scores.masked_fill(~mask, float('-1e9'))
         return scores
 
+class BattleCommandScorer(nn.Module):
+    def __init__(self,
+                 state_encoder: StateEncoder,
+                 action_encoder: ActionEncoder,
+                 action_projector: ActionProjector,
+                 compat_scorer: CompatibilityScorer):
+        super().__init__()
+        self.state_enc    = state_encoder
+        self.action_enc   = action_encoder
+        self.action_proj  = action_projector
+        self.compat_scorer= compat_scorer
+
+    def forward(self, state_vec, action_dicts):
+        """
+        state_vec: tensor [batch_size, ...]
+        action_dicts: list/dict of raw action features, length = num_actions
+        Returns: tensor [batch_size, num_actions] of scores
+        """
+        # 1) Embed state → [batch, D]
+        s_emb = self.state_enc(state_vec)
+
+        # 2) Embed raw actions → [num_actions, F]
+        raw_feats = self.action_enc(action_dicts)
+
+        # 3) Project actions into same D-dim space, add batch dim → [batch, num_actions, D]
+        a_emb   = self.action_proj(raw_feats.unsqueeze(0).to(s_emb.device))
+
+        # 4) Dot-product scores → [batch, num_actions]
+        return self.compat_scorer(s_emb, a_emb)
+
 class BattleTurnDataset(torch.utils.data.Dataset):
     """
     Loads per-turn data from export/<game_id>/ with precomputed features.

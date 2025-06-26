@@ -3,13 +3,14 @@ import socket
 import time
 from pathlib import Path
 from file2 import encode_battle_state_from_json, fill_battle_rewards, log_turn_to_csv, save_battle_state_to_tensors, save_action_tensor, save_chosen_index, extract_all_possible_commands
-from model import ActionEncoder, CompatibilityScorer, ActionProjector, StateEncoder, STATE_DIM, EMBED_DIM, FEATURE_DIM
+from model import ActionEncoder, CompatibilityScorer, ActionProjector, StateEncoder, BattleCommandScorer, STATE_DIM, EMBED_DIM, FEATURE_DIM
 import torch
 import numpy as np
 from runvcmi import open_vcmi_process, close_vcmi_process
 from paths import MODEL_WEIGHTS, EXPORT_DIR, BATTLE_JSON_PATH, ACTIONS_FILE, MASTER_LOG
 import re
 import shutil
+import pandas as pd
 
 # === CONFIGURATION ===
 SOCKET_PORT = 5000
@@ -89,6 +90,14 @@ def organize_export_files():
 
         shutil.move(str(file), str(dest_dir / file.name))
 
+def fill_battle_rewards(game_id: int, performance: float):
+    # Read the master log
+    df = pd.read_csv(MASTER_LOG)
+    # Assign performance to all rows of this game
+    df.loc[df['game_id'] == game_id, 'performance'] = performance
+    # Write back
+    df.to_csv(MASTER_LOG, index=False)
+
 def battle_loop():
     open_vcmi_process()
     time.sleep(3)
@@ -111,8 +120,10 @@ def battle_loop():
     action_encoder = ActionEncoder().to(device)
     action_projector = ActionProjector(FEATURE_DIM, EMBED_DIM).to(device)
     scorer = CompatibilityScorer().to(device)
-    scorer.load_state_dict(torch.load(MODEL_WEIGHTS, map_location=device))
-    scorer.eval()
+    # wrap, load weights, switch to eval
+    model = BattleCommandScorer(state_encoder, action_encoder, action_projector, scorer)
+    model.load_state_dict(torch.load(MODEL_WEIGHTS, map_location=device))
+    model.to(device).eval()
 
     print("starting battle loop...")
     while True:
