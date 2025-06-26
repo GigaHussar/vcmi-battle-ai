@@ -5,10 +5,21 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn.utils.rnn import pad_sequence
 from model import StateEncoder, ActionEncoder, ActionProjector, BattleCommandScorer, STATE_DIM, EMBED_DIM,FEATURE_DIM
-
-
 from model import CompatibilityScorer, BattleTurnDataset
-from paths import MASTER_LOG, EXPORT_DIR, MODEL_WEIGHTS
+from h3ai._paths_do_not_touch import MASTER_LOG, EXPORT_DIR, MODEL_WEIGHTS
+
+def selected_action(actions: torch.Tensor, idx: int) -> torch.Tensor:
+    """
+    Selects one action from a list of actions.
+
+    Args:
+        actions (torch.Tensor): shape (K, F) – K candidate actions, each with F features
+        idx     (int): index of the chosen action (0 <= idx < K)
+
+    Returns:
+        torch.Tensor: shape (F,) – the features of the chosen action
+    """
+    return actions[idx]
 
 def collate_fn(batch):
     # batch is a list of dicts: 'state', 'actions', 'chosen_idx'
@@ -106,10 +117,9 @@ def train(
             for batch in val_loader:
                 states = batch['state'].to(device)
                 actions = batch['actions'].to(device)
-                targets = batch['chosen_idx'].to(device)
-                scores = model(states, actions)
-                loss = criterion(scores, targets)
-                total_val_loss += loss.item() * states.size(0)
+                pred_score_val = scores.gather(1, chosen_idx.unsqueeze(1)).squeeze(1)
+                val_loss = criterion(pred_score_val, reward)
+                total_val_loss += val_loss.item() * states.size(0)
         avg_val_loss = total_val_loss / len(val_loader.dataset)
 
         print(f"Epoch {epoch}/{epochs} - Total Loss: {total_loss:.4f} - Val Loss: {avg_val_loss:.4f}")

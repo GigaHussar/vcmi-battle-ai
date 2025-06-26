@@ -2,7 +2,7 @@ import os
 import subprocess
 import time
 import subprocess as sp
-from paths import VCMI_BINARY
+from h3ai._paths_do_not_touch import VCMI_BINARY
 
 # Socket command list for VCMI EntryPoint:
 #
