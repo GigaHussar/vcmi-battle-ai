@@ -1,13 +1,15 @@
-"""Utility helpers for saving encoded actions & chosen index."""
 from pathlib import Path
 import numpy as np
-
+import torch
 from model import ActionEncoder
 
 _enc = ActionEncoder()
+_enc.eval()                       # gradients off for this helper
 
-def save_action_tensor(game_id: str, turn: int, action_dicts: list[dict], out_dir: Path):
-    arr = _enc(action_dicts).cpu().numpy()         # (K, 14)
+@torch.no_grad()                  # same idea, but at function level
+def save_action_tensor(game_id: str, turn: int,
+                       action_dicts: list[dict], out_dir: Path):
+    arr = _enc(action_dicts).detach().cpu().numpy()   #  ← detach !
     path = out_dir / f"action_feats_{game_id}_{turn}.npy"
     np.save(path, arr)
     return path

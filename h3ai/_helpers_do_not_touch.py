@@ -2,7 +2,7 @@ import json
 import socket
 import shutil
 import re
-from h3ai._paths_do_not_touch import EXPORT_DIR, BATTLE_JSON_PATH, H3AI_DIR, MASTER_LOG
+from _paths_do_not_touch import EXPORT_DIR, BATTLE_JSON_PATH, H3AI_DIR, MASTER_LOG
 import numpy as np
 from pathlib import Path
 import pandas as pd

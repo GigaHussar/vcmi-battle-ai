@@ -35,8 +35,12 @@ def battle_loop():
 
     open_vcmi_process()
     time.sleep(5)
-    send_command("open_load_menu"); time.sleep(1)
-    send_command("lobby_accept"); time.sleep(1)
+    send_command("open_load_menu")
+    time.sleep(1)
+    send_command("lobby_accept")
+    time.sleep(2)
+    send_command("move_active_hero_right")
+    time.sleep(2)
 
     game_id = int(time.time())
     last_turn = -1
