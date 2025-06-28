@@ -1,152 +1,75 @@
 import argparse
 import torch
-from torch.utils.data import DataLoader, random_split
 import torch.nn as nn
-import torch.optim as optim
-from torch.nn.utils.rnn import pad_sequence
-from model import StateEncoder, ActionEncoder, ActionProjector, BattleCommandScorer, STATE_DIM, EMBED_DIM,FEATURE_DIM
-from model import CompatibilityScorer, BattleTurnDataset
-from h3ai._paths_do_not_touch import MASTER_LOG, EXPORT_DIR, MODEL_WEIGHTS
+from torch.utils.data import DataLoader, random_split
 
-def selected_action(actions: torch.Tensor, idx: int) -> torch.Tensor:
-    """
-    Selects one action from a list of actions.
+from model import StateActionValueNet, BattleTurnDataset
+from _paths_do_not_touch import MASTER_LOG, EXPORT_DIR, MODEL_WEIGHTS
 
-    Args:
-        actions (torch.Tensor): shape (K, F) – K candidate actions, each with F features
-        idx     (int): index of the chosen action (0 <= idx < K)
+# --------------------------------------------------------------------
+def collate(batch):
+    st   = torch.stack([b["state"] for b in batch])          # (B, D)
+    act  = torch.stack([b["chosen_action"] for b in batch])  # (B, F)
+    rew  = torch.tensor([b["reward"] for b in batch])
+    return {"state": st, "action": act, "reward": rew}
 
-    Returns:
-        torch.Tensor: shape (F,) – the features of the chosen action
-    """
-    return actions[idx]
-
-def collate_fn(batch):
-    # batch is a list of dicts: 'state', 'actions', 'chosen_idx'
-    states = [item['state'] for item in batch]
-    actions = [item['actions'] for item in batch]
-    targets = torch.tensor([item['chosen_idx'] for item in batch], dtype=torch.long)
-    rewards = torch.tensor([item['reward'] for item in batch], dtype=torch.float)
-
-    # Pad sequences to the same length (batch first)
-    states_padded = pad_sequence(states, batch_first=True, padding_value=0)
-    actions_padded = pad_sequence(actions, batch_first=True, padding_value=0)
-    
-    return {
-        'state': states_padded,
-        'actions': actions_padded,
-        'chosen_idx': targets,
-        'reward': rewards,
-    }
-
-# Compose the four modules into one training model
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-state_enc     = StateEncoder(STATE_DIM, EMBED_DIM).to(device)
-action_enc    = ActionEncoder().to(device)
-action_proj   = ActionProjector(FEATURE_DIM, EMBED_DIM).to(device)
-scorer = CompatibilityScorer().to(device)
-model = BattleCommandScorer(state_enc, action_enc, action_proj, scorer).to(device)
-
-def train(
-    log_csv: str,
-    data_dir: str,
-    output_path: str,
-    epochs: int = 10,
-    batch_size: int = 32,
-    lr: float = 1e-3,
-    val_split: float = 0.2,
-    device: str = None,
-):
-    # Device setup
+# --------------------------------------------------------------------
+def train(epochs=10, batch_size=32, lr=1e-3, val_split=0.2, device=None):
     device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    # Dataset and split
-    dataset = BattleTurnDataset(log_csv, data_dir)
-    n_val = int(len(dataset) * val_split)
-    n_train = len(dataset) - n_val
-    train_ds, val_ds = random_split(dataset, [n_train, n_val])
 
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=collate_fn,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        collate_fn=collate_fn,
-    )
+    ds = BattleTurnDataset(str(MASTER_LOG), str(EXPORT_DIR))
+    n_val = int(len(ds) * val_split)
+    train_ds, val_ds = random_split(ds, [len(ds) - n_val, n_val])
 
-    # Model, loss, optimizer
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    dl_train = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate)
+    dl_val   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False, collate_fn=collate)
 
-    best_val_loss = float('inf')
-    for epoch in range(1, epochs + 1):
-        # Training
-        model.train()
-        total_loss = 0.0
-        for batch in train_loader:
-            states     = batch['state'].to(device)
-            actions    = batch['actions'].to(device)
-            chosen_idx = batch['chosen_idx'] .to(device)
-            reward     = batch['reward']    .to(device)
+    model = StateActionValueNet().to(device)
+    opt   = torch.optim.Adam(model.parameters(), lr=lr)
+    crit  = nn.MSELoss()
+    best  = float("inf")
 
-            optimizer.zero_grad()
+    for ep in range(1, epochs + 1):
+        # ------------- train ----------------------------------------------
+        model.train(); run = 0.0
+        for b in dl_train:
+            st = b["state"].to(device)
+            act = b["action"].to(device)
+            tgt = b["reward"].to(device)
 
-            # a) score every (state,action) pair → [B, num_actions]
-            scores = model(states, actions)
-
-            # b) extract the *one* predicted score for the action actually taken → [B]
-            pred_score = scores.gather(1, chosen_idx.unsqueeze(1)).squeeze(1)
-
-            # c) MSE against the real performance label
-            loss = criterion(pred_score, reward)
-
-            # d) backprop all weights
+            opt.zero_grad()
+            pred = model(st, act)                 # (B,)
+            loss = crit(pred, tgt)
             loss.backward()
-            optimizer.step()
+            opt.step()
+            run += loss.item() * st.size(0)
+        tr_loss = run / len(train_ds)
 
-            total_loss += loss.item() * states.size(0)
-
-        # Validation
-        model.eval()
-        total_val_loss = 0.0
+        # ------------- validation -----------------------------------------
+        model.eval(); run = 0.0
         with torch.no_grad():
-            for batch in val_loader:
-                states = batch['state'].to(device)
-                actions = batch['actions'].to(device)
-                pred_score_val = scores.gather(1, chosen_idx.unsqueeze(1)).squeeze(1)
-                val_loss = criterion(pred_score_val, reward)
-                total_val_loss += val_loss.item() * states.size(0)
-        avg_val_loss = total_val_loss / len(val_loader.dataset)
+            for b in dl_val:
+                st = b["state"].to(device)
+                act = b["action"].to(device)
+                tgt = b["reward"].to(device)
+                pred = model(st, act)
+                run += crit(pred, tgt).item() * st.size(0)
+        val_loss = run / len(val_ds)
+        print(f"Epoch {ep}/{epochs} – train {tr_loss:.4f} | val {val_loss:.4f}")
 
-        print(f"Epoch {epoch}/{epochs} - Total Loss: {total_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
+        if val_loss < best:
+            best = val_loss
+            MODEL_WEIGHTS.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(model.state_dict(), MODEL_WEIGHTS)
+            print(f"  ✓ saved best to {MODEL_WEIGHTS}")
 
-        # Save best model
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            torch.save(model.state_dict(), output_path)
-            print(f"Saved best model to {output_path}")
-
+# --------------------------------------------------------------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train BattleCommandScorer on collected data.")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
-    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for training")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--val-split", type=float, default=0.2, help="Fraction of data for validation")
-    parser.add_argument("--device", type=str, default=None, help="Compute device (e.g. 'cpu' or 'cuda')")
-    args = parser.parse_args()
-
-    train(
-        log_csv=str(MASTER_LOG),
-        data_dir=str(EXPORT_DIR),
-        output_path=str(MODEL_WEIGHTS),
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        val_split=args.val_split,
-        device=args.device,
-    )
-
+    p = argparse.ArgumentParser()
+    p.add_argument("--epochs", type=int, default=10)
+    p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--val-split", type=float, default=0.2)
+    p.add_argument("--device")
+    a = p.parse_args()
+    train(a.epochs, a.batch_size, a.lr, a.val_split, a.device)
