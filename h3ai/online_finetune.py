@@ -28,7 +28,7 @@ import pandas as pd
 # ---------------------------------------------------------------------
 class BattleTurnDatasetOnline(torch.utils.data.Dataset):
     """Subset of the full log containing only one finished game."""
-    def __init__(self, game_id: int,
+    def __init__(self, game_id: str,
                  log_csv: str = MASTER_LOG,
                  data_dir: str = EXPORT_DIR):
         self.df = (pd.read_csv(log_csv)

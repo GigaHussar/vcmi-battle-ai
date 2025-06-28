@@ -14,7 +14,7 @@ from _helpers_do_not_touch import (
     encode_battle_state_from_json, extract_all_possible_commands,
     format_command_for_vcmi, read_json, send_command,
     get_army_strengths, compute_performance, organize_export_files,
-    save_battle_state_to_tensors, log_turn_to_csv
+    save_battle_state_to_tensors, log_turn_to_csv, fill_battle_rewards
 )
 from file2 import save_action_tensor, save_chosen_index
 from _paths_do_not_touch import (
@@ -44,6 +44,7 @@ def battle_loop():
     time.sleep(2)
 
     game_id = int(time.time())
+    turn = 0
     last_turn = -1
     init_att = init_def = None
     print("🧠 agent online")
@@ -89,12 +90,13 @@ def battle_loop():
         fin_att, fin_def = get_army_strengths(final_state)
         perf = compute_performance(init_def - fin_def, init_att - fin_att)
         print(f"battle done – performance={perf:.3f}")
+    fill_battle_rewards(game_id, perf)
     
-    fine_tune_after_battle(game_id, epochs=3, lr=1e-4)   # tweak hyper-params as you like
-
-    organize_export_files()
     close_vcmi_process()
 
+    time.sleep(2)
+    fine_tune_after_battle(game_id, epochs=3, lr=1e-4)   # tweak hyper-params as you like
+    organize_export_files()
 
 if __name__ == "__main__":
     battle_loop()
