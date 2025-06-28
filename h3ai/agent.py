@@ -21,6 +21,7 @@ from _paths_do_not_touch import (
     MODEL_WEIGHTS, EXPORT_DIR, BATTLE_JSON_PATH, ACTIONS_FILE
 )
 from _runvcmi_do_not_touch import open_vcmi_process, close_vcmi_process
+from online_finetune import fine_tune_after_battle
 
 CHECK_INTERVAL = 2
 
@@ -88,6 +89,8 @@ def battle_loop():
         fin_att, fin_def = get_army_strengths(final_state)
         perf = compute_performance(init_def - fin_def, init_att - fin_att)
         print(f"battle done – performance={perf:.3f}")
+    
+    fine_tune_after_battle(game_id, epochs=3, lr=1e-4)   # tweak hyper-params as you like
 
     organize_export_files()
     close_vcmi_process()
