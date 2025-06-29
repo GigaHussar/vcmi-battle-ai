@@ -109,6 +109,9 @@ def extract_all_possible_commands(actions_data):
     """
     commands = []
 
+    # root-level legality (defaults to True for old logs)
+    global_can_wait = actions_data.get("can_wait", True)
+
     for action in actions_data.get("actions", []):
         type_id = action.get("type")
         action_type = ACTION_TYPE_MAP.get(type_id)
@@ -117,9 +120,14 @@ def extract_all_possible_commands(actions_data):
             continue
 
         if action_type == "wait":
-            if not action.get("can_wait", True):   # new legality test
-                continue
-            commands.append({"type": "wait"})
+            # prefer per-action flag if present, else use the root flag
+            can_wait = action.get("can_wait", global_can_wait)
+            if can_wait:
+                commands.append({"type": "wait"})
+                print("waiting available")
+            else:
+                print("waiting not available")
+            continue
 
         elif action_type == "defend":
             commands.append({"type": "defend"})

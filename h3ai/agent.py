@@ -98,5 +98,6 @@ def battle_loop():
     fine_tune_after_battle(game_id, epochs=3, lr=1e-4)   # tweak hyper-params as you like
     organize_export_files()
 
-if __name__ == "__main__":
+for i in range (50):
     battle_loop()
+    print(i)
