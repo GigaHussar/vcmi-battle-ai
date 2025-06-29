@@ -1095,6 +1095,9 @@ void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, c
 	bool isSpellcaster = stack->hasBonusOfType(BonusType::SPELLCASTER) && stack->canCast();
 	j["is_spellcaster"] = isSpellcaster;
 
+	bool canWait = !stack->waitedThisTurn;      // legal ⇔ unit has not waited yet
+	j["can_wait"] = canWait;                    // write to JSON
+
 	// Export known creature spells
 	nlohmann::json creatureSpellsJson = nlohmann::json::array();
 	TConstBonusListPtr bl = stack->getBonusesOfType(BonusType::SPELLCASTER);

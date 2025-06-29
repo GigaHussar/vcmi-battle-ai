@@ -116,9 +116,13 @@ def extract_all_possible_commands(actions_data):
             # skip unhandled types (including type 6)
             continue
 
-        if action_type in ("defend", "wait"):
-            # For "defend" and "wait", we just append the type
-            commands.append({"type": action_type})
+        if action_type == "wait":
+            if not action.get("can_wait", True):   # new legality test
+                continue
+            commands.append({"type": "wait"})
+
+        elif action_type == "defend":
+            commands.append({"type": "defend"})
 
         elif action_type == "move":
             # For "move", we need to extract reachable tiles
