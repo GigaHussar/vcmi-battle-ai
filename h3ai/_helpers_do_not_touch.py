@@ -280,9 +280,10 @@ def init_master_log():
                 "state_prefix",
                 "action_prefix",
                 "reward"
+                "predicted_performance"
             ])
 
-def log_turn_to_csv(game_id: str, turn: int):
+def log_turn_to_csv(game_id: str, turn: int, predicted_performance: float = ""):
     """
     Append one row with the given game_id and turn.
     state_prefix and action_prefix are both <game_id>_<turn>.
@@ -297,5 +298,6 @@ def log_turn_to_csv(game_id: str, turn: int):
             turn,
             prefix,
             prefix,
-            ""        # reward placeholder
+            "",        # reward placeholder
+            predicted_performance
         ])

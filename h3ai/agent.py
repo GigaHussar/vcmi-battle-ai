@@ -68,12 +68,13 @@ def battle_loop():
         action_feats = act_enc(actions).unsqueeze(0).to(device)   # (1, K, F)
         scores = net(state_vec, action_feats)
         chosen_idx = int(scores.argmax().item())
+        pred_perf   = float(scores[0, chosen_idx])     # model’s own score
 
         # logging & IO -------------------------------------------------------
         save_chosen_index(game_id, turn, chosen_idx, EXPORT_DIR)
         save_battle_state_to_tensors(f"{game_id}_{turn}", EXPORT_DIR)
         save_action_tensor(game_id, turn, actions, EXPORT_DIR)
-        log_turn_to_csv(game_id, turn)
+        log_turn_to_csv(game_id, turn, pred_perf)
         send_command(format_command_for_vcmi(actions[chosen_idx]))
 
         # end‑of‑battle detection -------------------------------------------
