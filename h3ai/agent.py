@@ -88,7 +88,7 @@ def battle_loop():
     final_state = read_json(BATTLE_JSON_PATH)
     if final_state:
         fin_att, fin_def = get_army_strengths(final_state)
-        perf = compute_performance(init_def - fin_def, init_att - fin_att)
+        perf = compute_performance(init_def - fin_def, init_att - fin_att, init_def, init_att)
         print(f"battle done – performance={perf:.3f}")
     fill_battle_rewards(game_id, perf)
     

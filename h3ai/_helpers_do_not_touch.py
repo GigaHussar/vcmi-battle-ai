@@ -78,15 +78,16 @@ def get_army_strengths(state):
         state.get("army_strength_defender", 0)
     )
 
-def compute_performance(kills: float, losses: float) -> float:
+def compute_performance(kills: float, losses: float, init_def: float, init_att: float) -> float:
     """
     Returns the fraction of total casualties that were enemy kills.
     If there were no casualties, returns 0.0.
     """
-    total = kills + losses
-    if total <= 0:
+    casualties = kills + losses
+    underdog = init_def / (init_att + init_def)
+    if casualties <= 0:
         return 0.0
-    return kills / total
+    return (kills / casualties) * underdog
 
 ACTION_TYPE_MAP = {
     0: "defend",
