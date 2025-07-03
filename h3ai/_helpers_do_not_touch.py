@@ -279,7 +279,7 @@ def init_master_log():
                 "turn",
                 "state_prefix",
                 "action_prefix",
-                "reward"
+                "reward",
                 "predicted_performance"
             ])
 
