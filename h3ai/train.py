@@ -26,7 +26,7 @@ def train(epochs=10, batch_size=32, lr=1e-3, val_split=0.2, device=None):
 
     model = StateActionValueNet().to(device)
     opt   = torch.optim.Adam(model.parameters(), lr=lr)
-    crit  = nn.MSELoss()
+    crit  = nn.L1Loss()
     best  = float("inf")
 
     for ep in range(1, epochs + 1):
