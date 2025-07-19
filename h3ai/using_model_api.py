@@ -96,13 +96,13 @@ def summarize_battle_state() -> str:
 
     return "\n".join(summary)
 
-def query_gemma3_with_battle_state(battle_state: dict) -> Optional[str]:
+def query_gemma3_with_battle_state() -> Optional[str]:
     """
     Gathers context and actions, queries local Gemma3:4b model via Ollama HTTP API, logs reasoning in VCMI's export dir,
     and returns the chosen action for sending to the game.
     """
-    from_path_summary = summarize_battle_state(battle_state)
-    available_actions = extract_available_actions(battle_state)
+    from_path_summary = summarize_battle_state()
+    available_actions = extract_available_actions()
 
     if not available_actions:
         print("No available actions.")
@@ -150,9 +150,7 @@ def query_gemma3_with_battle_state(battle_state: dict) -> Optional[str]:
 
     # Log path
     log_path = EXPORT_DIR / "gemma_turn_logs.json"
-    turn = battle_state.get("_turn", "unknown")
     log_entry = {
-        "turn": turn,
         "chosen_action": chosen_action,
         "reason": reason,
         "available_actions": available_actions,
@@ -164,7 +162,6 @@ def query_gemma3_with_battle_state(battle_state: dict) -> Optional[str]:
         if log_path.exists():
             with open(log_path, "r") as f:
                 logs = json.load(f)
-        logs[str(turn)] = log_entry
         with open(log_path, "w") as f:
             json.dump(logs, f, indent=2)
     except Exception as e:

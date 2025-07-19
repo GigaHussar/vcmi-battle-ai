@@ -8,7 +8,7 @@ Battle‑playing agent:
 import time
 import torch
 import numpy as np
-
+from using_model_api import summarize_battle_state, extract_available_actions, query_gemma3_with_battle_state
 from model import StateActionValueNet, ActionEncoder
 from _helpers_do_not_touch import (
     encode_battle_state_from_json, extract_all_possible_commands,
