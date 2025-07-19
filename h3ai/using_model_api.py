@@ -25,7 +25,7 @@ def extract_available_actions() -> list[str]:
 
     
     actions = []
-    origin_hex = data.get("origin", {}).get("hex")
+    
 
     for entry in data.get("actions", []):
         t = entry.get("type")
@@ -40,7 +40,11 @@ def extract_available_actions() -> list[str]:
         elif t in (5, 6):  # melee
             for target in entry.get("melee_targets", []):
                 if target.get("can_melee_attack"):
-                    actions.append(f"melee {target['hex']} {origin_hex}")
+                    tgt_hex = target.get("hex")
+                    origin_hex = target.get("attack_from", {}).get("hex")
+                    if tgt_hex is not None and origin_hex is not None:
+                        # CLI syntax: first the target, then the attacker’s hex
+                        actions.append(f"melee {tgt_hex} {origin_hex}")
 
     return actions
 
@@ -93,7 +97,7 @@ def summarize_battle_state() -> str:
         f"Attacker stacks: " + " | ".join(format_stack(u) for u in attackers),
         f"Defender stacks: " + " | ".join(format_stack(u) for u in defenders),
     ]
-
+    print("\n".join(summary))
     return "\n".join(summary)
 
 def query_gemma3_with_battle_state() -> Optional[str]:
@@ -107,6 +111,8 @@ def query_gemma3_with_battle_state() -> Optional[str]:
     if not available_actions:
         print("No available actions.")
         return None
+    
+    print("Available actions:", available_actions)
 
     prompt = (
         f"You are controlling a stack in a Heroes III style battle. Choose the best action.\n\n"
@@ -115,6 +121,7 @@ def query_gemma3_with_battle_state() -> Optional[str]:
         f"Respond in the format:\n"
         f"CHOSEN_ACTION: <one action from the list>\nREASON: <brief explanation>"
     )
+    print("Querying Ollama API with prompt:", prompt)
 
     try:
         response = requests.post(
@@ -124,7 +131,7 @@ def query_gemma3_with_battle_state() -> Optional[str]:
                 "prompt": prompt,
                 "stream": False
             },
-            timeout=60
+            timeout=30
         )
         response.raise_for_status()
         result = response.json()

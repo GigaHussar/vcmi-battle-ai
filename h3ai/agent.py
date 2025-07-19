@@ -55,48 +55,31 @@ def battle_loop():
         if not state_json or not actions_json:
             print("…waiting"); time.sleep(CHECK_INTERVAL); continue
 
-        feats, c_ids, f_ids = encode_battle_state_from_json(state_json)
-        state_vec = torch.from_numpy(
-            np.concatenate([feats.flatten(), c_ids.flatten(), f_ids.flatten()])
-        ).float().unsqueeze(0).to(device)
+        chosen_action = query_gemma3_with_battle_state()
 
-        turn = actions_json.get("turn", -1)
-        actions = extract_all_possible_commands(actions_json)
-        if not actions:
-            print("⚠️  no valid moves"); break
+        if not chosen_action:
+            print("⚠️ No action returned by Gemma"); break
 
-        action_feats = act_enc(actions).unsqueeze(0).to(device)   # (1, K, F)
-        scores = net(state_vec, action_feats)
-        chosen_idx = int(scores.argmax().item())
-        pred_perf   = float(scores[0, chosen_idx])     # model’s own score
-
-        # logging & IO -------------------------------------------------------
-        save_chosen_index(game_id, turn, chosen_idx, EXPORT_DIR)
-        save_battle_state_to_tensors(f"{game_id}_{turn}", EXPORT_DIR)
-        save_action_tensor(game_id, turn, actions, EXPORT_DIR)
-        log_turn_to_csv(game_id, turn, pred_perf)
-        send_command(format_command_for_vcmi(actions[chosen_idx]))
+        # Send chosen action to VCMI
+        print(f"Sending chosen action to VCMI: {chosen_action}")
+        send_command(chosen_action)
 
         # end‑of‑battle detection -------------------------------------------
         if last_turn == turn:
+            time.sleep(30)
+            print("⚠️ No turn change detected, assuming battle ended")
             break
         last_turn = turn
         if init_att is None:
             init_att, init_def = get_army_strengths(state_json)
         time.sleep(CHECK_INTERVAL)
 
-    # final performance ------------------------------------------------------
-    final_state = read_json(BATTLE_JSON_PATH)
-    if final_state:
-        fin_att, fin_def = get_army_strengths(final_state)
-        perf = compute_performance(init_def - fin_def, init_att - fin_att, init_def, init_att)
-        print(f"battle done – performance={perf:.3f}")
-    fill_battle_rewards(game_id, perf)
+
     
     close_vcmi_process()
 
     time.sleep(2)
-    fine_tune_after_battle(game_id, epochs=3, lr=1e-4)   # tweak hyper-params as you like
+    
     organize_export_files()
 
 for i in range (50000):
