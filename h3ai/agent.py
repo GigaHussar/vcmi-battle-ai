@@ -90,6 +90,6 @@ def battle_loop():
     
     organize_export_files()
 
-for i in range (50000):
+for i in range(1):
     battle_loop()
     print(i)

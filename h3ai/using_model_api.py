@@ -3,6 +3,8 @@ import subprocess
 from typing import Optional
 from _paths_do_not_touch import EXPORT_DIR, ACTIONS_FILE, BATTLE_JSON_PATH  # Assumes this is defined in your environment
 import requests
+import socket
+import time
 
 # Configurable model
 MODEL_CONFIG = {
@@ -77,6 +79,8 @@ def summarize_battle_state() -> str:
         base = f"{side}[{unit['id']}]: {unit['count']}x {unit['unit_name']} (HP:{unit['hp']})"
         if status:
             base += " [" + ",".join(status) + "]"
+        if "occupied_hexes" in unit:
+            base += f" (Hexes: {','.join(str(h) for h in unit['occupied_hexes'])})"
         return base
 
     turn = battle_json.get("_turn", 0)
@@ -112,6 +116,24 @@ def query_gemma3_with_battle_state() -> Optional[str]:
         return None
     
     print("Available actions:", available_actions)
+
+    # Check if Ollama is running, and start it if needed
+    if MODEL_CONFIG["backend"] == "ollama":
+        def is_ollama_running(host="localhost", port=11434):
+            try:
+                with socket.create_connection((host, port), timeout=2):
+                    return True
+            except OSError:
+                return False
+
+        if not is_ollama_running():
+            print(f"Ollama not running. Attempting to start model: {MODEL_CONFIG['model']}")
+            try:
+                subprocess.Popen(["ollama", "run", MODEL_CONFIG["model"]])
+                time.sleep(5)  # Wait a few seconds for it to boot up
+            except Exception as e:
+                print(f"Failed to start Ollama with model {MODEL_CONFIG['model']}: {e}")
+                return None
 
     prompt = (
         f"You are controlling a stack in a Heroes III style battle. Choose the best action.\n\n"
@@ -164,10 +186,13 @@ def query_gemma3_with_battle_state() -> Optional[str]:
     }
 
     try:
-        logs = {}
+        logs = []
         if log_path.exists():
             with open(log_path, "r") as f:
                 logs = json.load(f)
+        if not isinstance(logs, list):
+            logs = []
+        logs.append(log_entry)
         with open(log_path, "w") as f:
             json.dump(logs, f, indent=2)
     except Exception as e:
