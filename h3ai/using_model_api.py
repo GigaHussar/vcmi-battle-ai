@@ -97,7 +97,6 @@ def summarize_battle_state() -> str:
         f"Attacker stacks: " + " | ".join(format_stack(u) for u in attackers),
         f"Defender stacks: " + " | ".join(format_stack(u) for u in defenders),
     ]
-    print("\n".join(summary))
     return "\n".join(summary)
 
 def query_gemma3_with_battle_state() -> Optional[str]:

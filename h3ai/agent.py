@@ -7,6 +7,7 @@ Battle‑playing agent:
 """
 import time
 import torch
+import json
 import numpy as np
 from using_model_api import summarize_battle_state, extract_available_actions, query_gemma3_with_battle_state
 from model import StateActionValueNet, ActionEncoder
@@ -23,7 +24,7 @@ from _paths_do_not_touch import (
 from _runvcmi_do_not_touch import open_vcmi_process, close_vcmi_process
 from online_finetune import fine_tune_after_battle
 
-CHECK_INTERVAL = 2
+CHECK_INTERVAL = 4
 
 
 def battle_loop():
@@ -44,8 +45,8 @@ def battle_loop():
     time.sleep(2)
 
     game_id = int(time.time())
-    turn = 0
-    last_turn = -1
+    turn_number = None
+    last_turn = None
     init_att = init_def = None
     print("🧠 agent online")
 
@@ -64,12 +65,19 @@ def battle_loop():
         print(f"Sending chosen action to VCMI: {chosen_action}")
         send_command(chosen_action)
 
+        time.sleep(2)
         # end‑of‑battle detection -------------------------------------------
-        if last_turn == turn:
-            time.sleep(30)
-            print("⚠️ No turn change detected, assuming battle ended")
+        # Load the file
+        with open(ACTIONS_FILE, "r") as f:
+            data = json.load(f)
+        # Grab the turn number
+        turn_number = data["turn"]
+        print(turn_number)
+
+        print(last_turn)
+        if last_turn == turn_number:
             break
-        last_turn = turn
+        last_turn = turn_number
         if init_att is None:
             init_att, init_def = get_army_strengths(state_json)
         time.sleep(CHECK_INTERVAL)
