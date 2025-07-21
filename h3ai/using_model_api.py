@@ -5,10 +5,16 @@ from _paths_do_not_touch import EXPORT_DIR, ACTIONS_FILE, BATTLE_JSON_PATH  # As
 import requests
 import socket
 import time
-import api_key
+from api_key import claude  # Importing the model configuration
+
+ollama = {
+    "backend": "ollama",
+    "model": "gemma3:4b",
+    "api_url": "http://localhost:11434/api/generate"
+}
 
 # Configurable model
-MODEL_CONFIG = api_key.ollama
+MODEL_CONFIG = claude
 
 def extract_available_actions() -> list[str]:
     """
@@ -139,26 +145,50 @@ def query_gemma3_with_battle_state() -> Optional[str]:
         f"Respond in the format:\n"
         f"CHOSEN_ACTION: <one action from the list>\nREASON: <brief explanation>"
     )
-    print("Querying Ollama API with prompt:", prompt)
+    print("Querying API with prompt:", prompt)
 
     try:
-        response = requests.post(
-            MODEL_CONFIG["api_url"],
-            json={
-                "model": MODEL_CONFIG["model"],
-                "prompt": prompt,
-                "stream": False
-            },
-            timeout=30
-        )
-        response.raise_for_status()
-        result = response.json()
-        output_text = result.get("response", "").strip()
+        if MODEL_CONFIG["backend"] == "ollama":
+            response = requests.post(
+                MODEL_CONFIG["api_url"],
+                json={
+                    "model": MODEL_CONFIG["model"],
+                    "prompt": prompt,
+                    "stream": False
+                },
+                timeout=30
+            )
+            response.raise_for_status()
+            result = response.json()
+            output_text = result.get("response", "").strip()
+            
+        elif MODEL_CONFIG["backend"] == "claude":
+            response = requests.post(
+                MODEL_CONFIG["api_url"],
+                json={
+                    "model": MODEL_CONFIG["model"],
+                    "max_tokens": 1024,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ]
+                },
+                headers={
+                    "x-api-key": MODEL_CONFIG["api_key"],  
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json"
+                },
+                timeout=30
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            # Claude returns messages like this (not ChatGPT-style choices)
+            output_text = result.get("content", [{}])[0].get("text", "").strip()
     except requests.exceptions.Timeout:
-        print("Ollama API call timed out.")
+        print("API call timed out.")
         return None
     except Exception as e:
-        print(f"Error querying Ollama API: {e}")
+        print(f"Error querying API: {e}")
         return None
 
     chosen_action = None
@@ -174,7 +204,7 @@ def query_gemma3_with_battle_state() -> Optional[str]:
         return None
 
     # Log path
-    log_path = EXPORT_DIR / "gemma_turn_logs.json"
+    log_path = EXPORT_DIR / "turn_logs.json"
     log_entry = {
         "chosen_action": chosen_action,
         "reason": reason,
