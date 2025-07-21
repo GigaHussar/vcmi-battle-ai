@@ -5,13 +5,10 @@ from _paths_do_not_touch import EXPORT_DIR, ACTIONS_FILE, BATTLE_JSON_PATH  # As
 import requests
 import socket
 import time
+import api_key
 
 # Configurable model
-MODEL_CONFIG = {
-    "backend": "ollama",
-    "model": "gemma3:4b",
-    "api_url": "http://localhost:11434/api/generate"
-}
+MODEL_CONFIG = api_key.ollama
 
 def extract_available_actions() -> list[str]:
     """
