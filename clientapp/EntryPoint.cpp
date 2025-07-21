@@ -46,6 +46,29 @@
 
 #include <SDL_main.h>
 #include <SDL.h>
+#include <thread>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <cstring>
+#include "../client/battle/BattleActionsController.h"
+#include "../client/battle/BattleInterface.h"
+#include "StdInc.h"
+#include "GameInstance.h"
+
+// Pull in the adventure‐map state and selection API
+#include "../client/PlayerLocalState.h"       // defines PlayerLocalState::getCurrentHero()
+
+// Full definitions for CGHeroInstance and int3
+#include "../lib/mapObjects/CGHeroInstance.h"
+#include "../lib/pathfinder/CGPathNode.h"      // where `int3` is declared
+
+// The callback interface that packages and sends MoveHero packets
+#include "../lib/callback/CCallback.h"
+
+#include "mainmenu/CMainMenu.h"             // for CMainMenu::openLobby
+#include "lobby/CSelectionBase.h" // for ESelectionScreen
+#include "lobby/CLobbyScreen.h"   // for ELoadMode
+
 
 #ifdef VCMI_ANDROID
 #include "../lib/CAndroidVMHelper.h"
@@ -127,13 +150,175 @@ int main(int argc, char * argv[])
 	CAndroidVMHelper::initClassloader(SDL_AndroidGetJNIEnv());
 	// boost will crash without this
 	setenv("LANG", "C", 1);
-#endif
-
+	    std::thread([]() {
+        // …
+    }).detach();
+#endif  // VCMI_ANDROID
 #if !defined(VCMI_MOBILE)
 	// Correct working dir executable folder (not bundle folder) so we can use executable relative paths
 	boost::filesystem::current_path(boost::filesystem::system_complete(argv[0]).parent_path());
 #endif
 	std::cout << "Starting... " << std::endl;
+
+	// --- SOCKET SERVER THREAD FOR EXTERNAL COMMANDS ---
+	std::thread([]() {
+		int server_fd, new_socket;
+		struct sockaddr_in address;
+		int opt = 1;
+		int addrlen = sizeof(address);
+		char buffer[1024] = {0};
+
+		std::cout << "[SOCKET] Starting socket server thread..." << std::endl;
+
+		if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+			perror("socket failed");
+			return;
+		}
+		std::cout << "[SOCKET] socket() OK" << std::endl;
+
+		if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+			perror("setsockopt");
+			return;
+		}
+		std::cout << "[SOCKET] setsockopt() OK" << std::endl;
+
+		address.sin_family = AF_INET;
+		address.sin_addr.s_addr = INADDR_ANY;
+		address.sin_port = htons(5000); // port 5000
+
+		if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+			perror("bind failed");
+			return;
+		}
+		std::cout << "[SOCKET] bind() OK" << std::endl;
+
+		if (listen(server_fd, 3) < 0) {
+			perror("listen");
+			return;
+		}
+		std::cout << "[SOCKET] listen() OK" << std::endl;
+
+		logGlobal->info("🧠 Socket server listening on port 5000...");
+		std::cout << "[SOCKET] Listening on port 5000..." << std::endl;
+
+		while (true)
+		{
+			if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
+				perror("accept");
+				continue;
+			}
+
+			int valread = read(new_socket, buffer, 1024);
+			buffer[valread] = '\0';
+
+			std::string cmd(buffer);
+			cmd.erase(std::remove(cmd.begin(), cmd.end(), '\n'), cmd.end());
+
+			logGlobal->info("🛰️ Received command via socket: %s", cmd.c_str());
+
+			if (!GAME)
+			{
+				logGlobal->warn("🚫 GAME is null.");
+				close(new_socket);
+				continue;
+			}
+			else if (cmd == "move_active_hero_left")
+			{
+				// 1) grab the currently selected (active) hero from the local state
+				const CGHeroInstance* h = GAME->interface()->localState->getCurrentHero();
+				if (!h)
+				{
+					logGlobal->warn("No hero currently selected.");
+				}
+				else
+				{
+					// 2) compute the target vis tile and convert to world coords
+					int3 oldVis = h->visitablePos();
+					int3 newVis { oldVis.x - 1, oldVis.y, oldVis.z };
+					int3 worldDest = h->convertFromVisitablePos(newVis);
+
+					// 3) send the exact same packet the UI would:
+					//    this enqueues a MoveHero pack (path=[worldDest], heroID=h->id, transit=false)
+					GAME->interface()->cb->moveHero(h, worldDest, /*useTransit=*/false);
+					logGlobal->info("Requested hero move from (%d,%d) to (%d,%d)",
+									oldVis.x, oldVis.y, newVis.x, newVis.y);
+				}
+			}
+			// Move the active hero one tile to the right
+			else if (cmd == "move_active_hero_right")
+			{
+				// 1) grab the currently selected hero
+				const CGHeroInstance* h = GAME->interface()->localState->getCurrentHero();
+				if (!h)
+				{
+					logGlobal->warn("No hero currently selected.");
+					close(new_socket);
+					continue;
+				}
+
+				// 2) compute current and target visitable‐tile coords
+				int3 oldVis = h->visitablePos();
+				int3 newVis{ oldVis.x + 1, oldVis.y, oldVis.z };
+
+				// 3) convert that to world coords
+				int3 worldDest = h->convertFromVisitablePos(newVis);
+
+				// 4) send the MoveHero packet (false = foot move)
+				GAME->interface()->cb->moveHero(h, worldDest, /*useTransit=*/false);
+
+				logGlobal->info("Socket: moved hero from (%d,%d) to (%d,%d)",
+								oldVis.x, oldVis.y,
+								newVis.x, newVis.y);
+
+				close(new_socket);
+				continue;
+			}
+			else if (cmd == "open_load_menu")
+			{
+				logGlobal->info("Socket: opening Load Game menu");
+
+				// 2) Call the exact same method your “Load” button invokes:
+				CMainMenu::openLobby(
+					ESelectionScreen::loadGame,  // the “Load Game” screen
+					true,                        // host locally
+					{},                          // no player names needed
+					ELoadMode::SINGLE            // single‐player load mode
+				);
+
+				close(new_socket);
+				continue;
+			}
+			else if (cmd == "lobby_accept")
+			{
+				logGlobal->info("Socket: simulating Enter on Load-Game");
+
+				// exactly what the Load button/Enter key does:
+				if (GAME->server().validateGameStart(false))
+					GAME->server().sendStartGame(false);
+				else
+					logGlobal->warn("Load-Game validation failed");
+
+				close(new_socket);
+				continue;
+			}
+			else
+			{
+				if (GLOBAL_SOCKET_ACTION_CONTROLLER)
+				{
+					logGlobal->info("🎯 Sending command to controller directly.");
+					GLOBAL_SOCKET_ACTION_CONTROLLER->performSocketCommand(cmd);
+				}
+				else
+				{
+					logGlobal->warn("🚫 GLOBAL_SOCKET_ACTION_CONTROLLER is null.");
+				}
+			}
+
+			close(new_socket);
+		}
+	}).detach();
+
+
 	po::options_description opts("Allowed options");
 	po::variables_map vm;
 

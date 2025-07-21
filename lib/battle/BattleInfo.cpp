@@ -7,6 +7,26 @@
  * Full text of license available in license.txt file, in main folder
  *
  */
+#include <fstream>
+#include "../../external/json/json.hpp"
+
+#include "spells/ISpellMechanics.h"
+#include "spells/CSpellHandler.h"
+#include "spells/Problem.h"
+#include "PossiblePlayerBattleAction.h"
+#include "CStack.h"
+#include "BattleHex.h"
+#include "spells/CSpellHandler.h"
+#include "entities/hero/CHeroHandler.h"
+#include "BattleUnitTurnReason.h"
+#include "../callback/CGameInfoCallback.h"
+
+#include <chrono>
+#include <iomanip>
+#include <sstream>
+#include <fstream>
+#include <random>
+
 #include "StdInc.h"
 #include "BattleInfo.h"
 
@@ -26,6 +46,694 @@
 #include "../ObstacleHandler.h"
 
 #include <vstd/RNG.h>
+
+BattleHexArray BattleInfo::getSpellTargetHexes(SpellID spell, const CStack *caster) const
+{
+    BattleHexArray tiles;
+    // Simplified: just return all alive enemy stack positions
+    for (const auto &target : stacks)
+    {
+        if (!target->isDead() && target->unitSide() != caster->unitSide())
+            tiles.insert(target->getPosition());
+    }
+    return tiles;
+}
+
+
+
+std::string toString(PossiblePlayerBattleAction::Actions action)
+{
+	switch (action)
+	{
+		case PossiblePlayerBattleAction::INVALID: return "INVALID";
+		case PossiblePlayerBattleAction::CREATURE_INFO: return "CREATURE_INFO";
+		case PossiblePlayerBattleAction::HERO_INFO: return "HERO_INFO";
+		case PossiblePlayerBattleAction::MOVE_TACTICS: return "MOVE_TACTICS";
+		case PossiblePlayerBattleAction::CHOOSE_TACTICS_STACK: return "CHOOSE_TACTICS_STACK";
+		case PossiblePlayerBattleAction::MOVE_STACK: return "MOVE_STACK";
+		case PossiblePlayerBattleAction::ATTACK: return "ATTACK";
+		case PossiblePlayerBattleAction::WALK_AND_ATTACK: return "WALK_AND_ATTACK";
+		case PossiblePlayerBattleAction::ATTACK_AND_RETURN: return "ATTACK_AND_RETURN";
+		case PossiblePlayerBattleAction::SHOOT: return "SHOOT";
+		case PossiblePlayerBattleAction::CATAPULT: return "CATAPULT";
+		case PossiblePlayerBattleAction::HEAL: return "HEAL";
+		case PossiblePlayerBattleAction::RANDOM_GENIE_SPELL: return "RANDOM_GENIE_SPELL";
+		case PossiblePlayerBattleAction::NO_LOCATION: return "NO_LOCATION";
+		case PossiblePlayerBattleAction::ANY_LOCATION: return "ANY_LOCATION";
+		case PossiblePlayerBattleAction::OBSTACLE: return "OBSTACLE";
+		case PossiblePlayerBattleAction::TELEPORT: return "TELEPORT";
+		case PossiblePlayerBattleAction::SACRIFICE: return "SACRIFICE";
+		case PossiblePlayerBattleAction::FREE_LOCATION: return "FREE_LOCATION";
+		case PossiblePlayerBattleAction::AIMED_SPELL_CREATURE: return "AIMED_SPELL_CREATURE";
+		default: return "UNKNOWN";
+	}
+}
+
+void BattleInfo::initExportFileName()
+{
+	if (!exportFileName.empty())
+		return;
+
+	using namespace std::chrono;
+
+	// High-precision time
+	auto now = system_clock::now();
+	auto now_ns = time_point_cast<nanoseconds>(now);
+	auto epoch = now_ns.time_since_epoch();
+
+	// Break down time
+	auto seconds_since_epoch = duration_cast<seconds>(epoch);
+	auto ms_part = duration_cast<milliseconds>(epoch - seconds_since_epoch).count();
+	auto ns_part = duration_cast<nanoseconds>(epoch - seconds_since_epoch).count() % 1000000; // Only sub-millisecond part
+
+	auto t = system_clock::to_time_t(now);
+	std::tm tm = *std::localtime(&t);
+
+	std::ostringstream timestampStream;
+	timestampStream << std::put_time(&tm, "%Y%m%d_%H%M%S");
+	timestampStream << "_" << std::setw(3) << std::setfill('0') << ms_part;
+	timestampStream << "_" << std::setw(6) << std::setfill('0') << ns_part;
+
+	// Random ID
+	std::random_device rd;
+	std::mt19937 gen(rd());
+	std::uniform_int_distribution<> dis(0, 0xFFFFFF);
+	std::ostringstream randomIdStream;
+	randomIdStream << std::hex << std::setw(6) << std::setfill('0') << dis(gen);
+
+	exportId = timestampStream.str() + "_" + randomIdStream.str();
+	exportFileName = "battle_" + exportId + ".json";
+}
+
+
+
+void BattleInfo::exportBattleStateToJson()
+{
+	static bool exportToggle = false;
+	static int turnCounter = 0;
+	int attackerTurn = 0;
+	int defenderTurn = 0;
+	std::string currentTurnSide = "unknown";
+
+	exportToggle = !exportToggle;
+	if (!exportToggle)
+		return;
+	
+	// Make sure initExportFileName() is called first
+	//initExportFileName(); // in case it's not yet generated
+
+	std::filesystem::path exportPath = "../../export";
+	std::filesystem::create_directories(exportPath);
+	std::filesystem::path logFilePath = exportPath / "battle.json";
+
+
+
+	using json = nlohmann::json;
+	json turnData;
+	turnData["_turn"] = turnCounter++;
+
+	auto computeLiveArmyStrength = [this](BattleSide side) -> uint64_t {
+		uint64_t total = 0;
+		for (const auto &stack : stacks)
+		{
+			if (stack->unitSide() == side && !stack->isDead())
+			{
+				const auto *cre = stack->unitType();
+				int count = stack->getCount();
+				if (cre)
+					total += static_cast<uint64_t>(cre->getAIValue()) * count;
+			}
+		}
+		return total;
+	};
+
+	turnData["army_strength_attacker"] = computeLiveArmyStrength(BattleSide::ATTACKER);
+	turnData["army_strength_defender"] = computeLiveArmyStrength(BattleSide::DEFENDER);
+
+	// Basic tactical info
+	turnData["tactic_distance"] = tacticDistance;
+	turnData["tactic_side"] = tacticsSide == BattleSide::ATTACKER ? "attacker" :
+	                          tacticsSide == BattleSide::DEFENDER ? "defender" : "none";
+
+	for (BattleSide side : {BattleSide::ATTACKER, BattleSide::DEFENDER})
+	{
+		const auto *hero = getSideHero(side);
+		if (!hero) continue;
+
+		json heroJson;
+		heroJson["id"] = hero->id.getNum();
+
+		// Primary stats via method calls or getters
+		heroJson["fighting_strength"] = hero->getFightingStrength();
+		heroJson["magic_strength"] = hero->getMagicStrength();
+		heroJson["total_strength"] = hero->getHeroStrength();
+
+		// Spellcasting & Magic
+		heroJson["mana"] = hero->mana;
+		heroJson["max_mana"] = hero->manaLimit();
+		heroJson["mana_next_turn"] = hero->getManaNewTurn();
+		heroJson["has_spellbook"] = hero->hasSpellbook();
+
+		json spells = json::array();
+		for (const auto &spell : hero->getSpellsInSpellbook())
+			spells.push_back(spell.getNum());
+		heroJson["spellbook"] = spells;
+
+		json secSkills = json::array();
+		for (const auto &pair : hero->secSkills)
+		{
+			json skillJson;
+			skillJson["skill_id"] = pair.first.getNum();
+			skillJson["level"] = pair.second; // 1=Basic, 2=Advanced, 3=Expert
+			secSkills.push_back(skillJson);
+		}
+		heroJson["secondary_skills"] = secSkills;
+
+
+		std::string sideStr = (side == BattleSide::ATTACKER ? "attacker" : "defender");
+		turnData["hero_" + sideStr] = heroJson;
+	}
+
+
+	turnData["terrain"] = static_cast<int>(terrainType);
+	turnData["battlefield_type"] = static_cast<int>(battlefieldType);
+	turnData["location"] = {tile.x, tile.y, tile.z};
+
+	auto bfInfo = LIBRARY->battlefields()->getById(battlefieldType);
+	if (bfInfo)
+	{
+		json battlefieldJson;
+		battlefieldJson["id"] = static_cast<int>(bfInfo->battlefield.getNum());
+		battlefieldJson["name"] = bfInfo->name;
+		battlefieldJson["identifier"] = bfInfo->identifier;
+		battlefieldJson["mod_scope"] = bfInfo->modScope;
+		battlefieldJson["icon_index"] = bfInfo->iconIndex;
+		battlefieldJson["is_special"] = bfInfo->isSpecial;
+
+		std::vector<int> impHexes;
+		for (const auto &hex : bfInfo->impassableHexes)
+			impHexes.push_back(hex.toInt());
+		battlefieldJson["impassable_hexes"] = impHexes;
+
+		json bonusesJson = json::array();
+		battlefieldJson["bonuses"] = bonusesJson;
+
+		turnData["battlefield_info"] = battlefieldJson;
+	}
+
+
+
+	// Turn queue
+	std::vector<battle::Units> queue;
+	battleGetTurnOrder(queue, 0, 1);
+	json turnQueue = json::array();
+	for (const auto &unit : queue[0])
+		turnQueue.push_back(unit->unitId());
+	turnData["turn_queue"] = turnQueue;
+	
+	json allStacksJson = json::array();
+	for (const auto &stack : stacks)
+	{	
+		if (!stack->isDead() && stack->unitId() == activeStack)
+    	{
+			if (stack->unitSide() == BattleSide::ATTACKER)
+			{
+				attackerTurn++;
+				currentTurnSide = "attacker";
+			}
+			else if (stack->unitSide() == BattleSide::DEFENDER)
+			{
+				defenderTurn++;
+				currentTurnSide = "defender";
+			}
+		}
+		const auto *type = stack->unitType();
+		json unitJson;
+
+		// Basic unit info
+		unitJson["id"] = stack->unitId();
+		unitJson["creature_id"] = static_cast<int>(type->getId());
+		unitJson["level"] = type->getLevel();
+		unitJson["is_large"] = type->isDoubleWide();
+		unitJson["faction"] = static_cast<int>(type->getFactionID());
+		unitJson["cost"] = type->getRecruitCost(EGameResID::GOLD);
+
+		// Position & ownership
+		unitJson["position"] = stack->getPosition().toInt();
+		unitJson["initial_position"] = stack->initialPosition.toInt();
+		unitJson["side"] = stack->unitSide() == BattleSide::ATTACKER ? "attacker" : "defender";
+		unitJson["owner"] = static_cast<int>(stack->unitOwner());
+		unitJson["unit_slot"] = stack->unitSlot().getNum();
+		
+		unitJson["effective_owner"] = static_cast<int>(stack->unitEffectiveOwner(stack.get()));
+		unitJson["base_amount"] = stack->unitBaseAmount();
+
+
+		// Status
+		unitJson["count"] = stack->getCount();
+		unitJson["hp"] = stack->getAvailableHealth();
+		unitJson["initiative"] = stack->getInitiative(0);
+		unitJson["is_active"] = stack->unitId() == activeStack;
+		unitJson["is_dead"] = stack->isDead();
+		unitJson["is_turret"] = stack->isTurret();
+		unitJson["can_retaliate"] = stack->ableToRetaliate();
+		unitJson["canAct"] = stack->canMove();
+		unitJson["canShoot"] = stack->canShoot();
+		unitJson["canCast"] = stack->canCast();
+		unitJson["isShooter"] = stack->isShooter();
+		unitJson["isClone"] = stack->isClone();
+		unitJson["cloneID"] = stack->cloneID;
+		unitJson["ghost"] = stack->ghost;
+
+		// Morale & luck
+		unitJson["morale"] = stack->moraleVal();
+		unitJson["luck"] = stack->luckVal();
+
+		// Spellcasting/retaliation state
+		unitJson["has_ammo_cart"] = stack->unitHasAmmoCart(stack.get());
+		unitJson["raw_surrender_cost"] = stack->getRawSurrenderCost();
+		unitJson["magic_resistance"] = stack->magicResistance();
+
+		// Terrain-related
+		unitJson["is_on_native_terrain"] = stack->isOnNativeTerrain();
+		unitJson["current_terrain"] = static_cast<int>(stack->getCurrentTerrain());
+
+		// Names/descriptions
+		unitJson["unit_description"] = stack->getDescription();
+		unitJson["unit_name"] = stack->getName();
+
+		// Active spells
+		json effectsJson = json::array();
+		for (const auto &spell : stack->activeSpells())
+			effectsJson.push_back(spell.getNum());
+		unitJson["unit_active_spells"] = effectsJson;
+
+		// Hero reference
+		unitJson["unit_hero_id"] = stack->getMyHero() ? stack->getMyHero()->id.getNum() : -1;
+
+		// Occupied hexes
+		std::vector<int> occupiedHexes;
+		for (const auto &hex : stack->getHexes())
+			occupiedHexes.push_back(hex.toInt());
+		unitJson["occupied_hexes"] = occupiedHexes;
+
+		// Available actions
+		json actionsJson = json::array();
+		if (stack->alive() && stack->getPosition().isValid())
+		{
+			auto possibleActions = getClientActionsForStack(stack.get(), BattleClientInterfaceData());
+			for (const auto &action : possibleActions)
+				actionsJson.push_back(toString(action.get()));
+		}
+		unitJson["available_actions"] = actionsJson;	
+
+		allStacksJson.push_back(unitJson);
+	}
+	turnData["all_units"] = allStacksJson;
+	
+	turnData["turn_attacker"] = attackerTurn;
+	turnData["turn_defender"] = defenderTurn;
+	turnData["current_turn_side"] = currentTurnSide;
+
+	// Side data
+	for (BattleSide side : {BattleSide::ATTACKER, BattleSide::DEFENDER})
+	{
+		std::string sideStr = side == BattleSide::ATTACKER ? "attacker" : "defender";
+		json sideJson;
+		sideJson["color"] = getSide(side).color.toString();
+		sideJson["hero_id"] = getSideHero(side) ? getSideHero(side)->id : -1;
+		sideJson["cast_spells"] = getCastSpells(side);
+		sideJson["enchanter_counter"] = getEnchanterCounter(side);
+		sideJson["cast_spells_count"] = getSide(side).castSpellsCount;
+
+		json spellHistJson = json::array();
+		for (const auto &spell : getSide(side).usedSpellsHistory)
+			spellHistJson.push_back(spell.getNum());
+		sideJson["used_spells_history"] = spellHistJson;
+
+		json spellsJson = json::array();
+		for (const auto &spell : getUsedSpells(side))
+			spellsJson.push_back(spell.getNum());
+		sideJson["used_spells"] = spellsJson;
+
+		turnData["side_data"][sideStr] = sideJson;		
+		
+	}
+
+	// Obstacles
+	json obstaclesJson = json::array();
+	for (const auto &obstacle : getAllObstacles()) {
+		json objJson;
+		objJson["id"] = obstacle->uniqueID;
+		objJson["pos"] = obstacle->pos.toInt();
+		objJson["type"] = obstacle->obstacleType;
+		std::vector<int> blockedTileInts;
+		for (const auto &tile : obstacle->getBlockedTiles().toVector())
+			blockedTileInts.push_back(tile.toInt());
+		objJson["blocking_tiles"] = blockedTileInts;
+		objJson["trigger_spell"] = obstacle->getTrigger().getNum();
+		objJson["stops_movement"] = obstacle->stopsMovement();
+		objJson["blocks_tiles"] = obstacle->blocksTiles();
+		objJson["triggers_effects"] = obstacle->triggersEffects();
+		obstaclesJson.push_back(objJson);
+	}
+	turnData["obstacles"] = obstaclesJson;
+
+	// Walls & Gate
+	json wallStatesJson;
+	for (int i = 0; i < static_cast<int>(EWallPart::PARTS_COUNT); ++i) {
+		auto part = static_cast<EWallPart>(i);
+		wallStatesJson[std::to_string(i)] = static_cast<int>(getWallState(part));
+	}
+	turnData["wall_state"] = wallStatesJson;
+	turnData["gate_state"] = static_cast<int>(getGateState());
+
+	// Write a single JSON object (turnData) to the file
+	std::ofstream outFile(logFilePath, std::ios::trunc);
+	outFile << turnData.dump(2);
+}
+
+bool BattleInfo::isCastingPossibleHere(const CSpell *spell, const CStack *target, const BattleHex &pos) const
+{
+	if (!spell || !target)
+		return false;
+
+	spells::Target tgt;
+	tgt.emplace_back();
+
+	spells::BattleCast cast(this, target, spells::Mode::HERO, spell);
+	auto mechanics = spell->battleMechanics(&cast);
+	spells::detail::ProblemImpl ignored;
+	return mechanics->canBeCastAt(tgt, ignored);
+}
+
+BattleHex BattleInfo::getAttackFromHex(const CStack *attacker, const CStack *target) const
+{
+	for (const BattleHex &hex : target->getPosition().getNeighbouringTiles())
+	{
+		if (!hex.isValid())
+			continue;
+
+		if (this->battleCanAttack(attacker, target, hex))
+			return hex;
+	}
+	return BattleHex::INVALID;
+}
+
+
+void BattleInfo::exportPossibleActionsToJson(const CStack *stack, const std::vector<PossiblePlayerBattleAction> &actions, PlayerColor currentPlayer)
+{	
+	this->initExportFileName();
+	// Set up log file path
+	const std::filesystem::path logDir = "../../export";
+	if (!std::filesystem::exists(logDir))
+		std::filesystem::create_directories(logDir);
+
+	const std::string logFilePath = (logDir / exportFileName).string();
+
+	// Static turn counter, incremented only when this function is executed
+	static int turnCounter = 0;
+
+	// Prepare the data for this stack for this turn
+	nlohmann::json j;
+	j["stack_id"] = stack->unitId();
+	const BattleHex &pos = stack->position;
+	j["origin"] = {
+		{"x", pos.getX()},
+		{"y", pos.getY()},
+		{"hex", pos.toInt()}
+	};
+	j["actions"] = nlohmann::json::array();
+
+	// Add spellcaster flag
+	bool isSpellcaster = stack->hasBonusOfType(BonusType::SPELLCASTER) && stack->canCast();
+	j["is_spellcaster"] = isSpellcaster;
+
+	// Export known creature spells
+	nlohmann::json creatureSpellsJson = nlohmann::json::array();
+	TConstBonusListPtr bl = stack->getBonusesOfType(BonusType::SPELLCASTER);
+	for (const auto &bonus : *bl)
+	{
+		if (bonus->additionalInfo[0] <= 0 && bonus->subtype.as<SpellID>().hasValue())
+		{
+			const CSpell *s = bonus->subtype.as<SpellID>().toSpell();
+			if (s)
+			{
+				creatureSpellsJson.push_back({
+					{"spell_id", s->id.getNum()},
+					{"name", s->getNameTranslated()}
+				});
+			}
+		}
+	}
+	j["creature_spells"] = creatureSpellsJson;
+
+	// Determine creature spellcasting targets
+	nlohmann::json spellcastTargets = nlohmann::json::array();
+
+	if (isSpellcaster)
+	{
+		for (const auto &action : actions)
+		{
+			if (action.get() != PossiblePlayerBattleAction::NO_LOCATION)
+				continue;
+
+			const spells::Caster *caster = stack;
+			const CSpell *spell = action.spell().toSpell();
+			if (!spell)
+				continue;
+
+			spells::Target target;
+			target.emplace_back();
+			spells::BattleCast cast(this, caster, spells::Mode::CREATURE_ACTIVE, spell);
+			auto m = spell->battleMechanics(&cast);
+			spells::detail::ProblemImpl ignored;
+
+			if (m->canBeCastAt(target, ignored))
+			{
+				for (const CStack *unit : this->battleGetAllStacks())
+				{
+					if (!unit->alive())
+						continue;
+					if (!isCastingPossibleHere(spell, unit, unit->getPosition()))
+						continue;
+
+					spellcastTargets.push_back({
+						{"stack_id", unit->unitId()},
+						{"x", unit->position.getX()},
+						{"y", unit->position.getY()},
+						{"hex", unit->position.toInt()}
+					});
+				}
+				break;
+			}
+		}
+	}
+	j["creature_spellcast_possible"] = !spellcastTargets.empty();
+	j["creature_spellcast_targets"] = spellcastTargets;
+
+	const CGHeroInstance *attHero = getSideHero(BattleSide::ATTACKER);
+	const CGHeroInstance *defHero = getSideHero(BattleSide::DEFENDER);
+
+	const CGHeroInstance *castingHero =
+		(attHero && attHero->tempOwner == currentPlayer)
+			? attHero
+			: defHero;
+
+
+	if (castingHero && castingHero->hasSpellbook())
+	{
+		j["hero_spellcasting_available"] = true;
+		j["hero_can_still_cast_this_round"] = this->battleCanCastSpell(castingHero, spells::Mode::HERO) == ESpellCastProblem::OK;
+
+		nlohmann::json heroSpells = nlohmann::json::array();
+		for (const auto &spell : castingHero->getSpellsInSpellbook())
+		{
+			nlohmann::json spellJson;
+			spellJson["spell_id"] = spell.getNum();
+			spellJson["targets"] = nlohmann::json::array();
+
+			const CSpell *spellPtr = spell.toSpell();
+			if (spellPtr)
+			{   
+				spellJson["can_cast_now"] = spellPtr->canBeCast(this, spells::Mode::HERO, castingHero);
+
+				for (const CStack *unit : this->battleGetAllStacks())
+				{
+					if (!unit->alive()) continue;
+					if (!isCastingPossibleHere(spellPtr, unit, unit->getPosition())) continue;
+
+					spellJson["targets"].push_back({
+						{"stack_id", unit->unitId()},
+						{"x", unit->position.getX()},
+						{"y", unit->position.getY()},
+						{"hex", unit->position.toInt()}
+					});
+				}
+			}
+			heroSpells.push_back(spellJson);
+		}
+		j["hero_spells"] = heroSpells;
+	}
+	else
+	{
+		j["hero_spellcasting_available"] = false;
+		j["hero_spells"] = nlohmann::json::array();
+	}
+
+	for (const auto &action : actions)
+	{
+		nlohmann::json a;
+		a["type"] = static_cast<int>(action.get());
+
+		switch (action.get())
+		{
+			case PossiblePlayerBattleAction::MOVE_STACK:
+			{
+				a["reachable_tiles"] = nlohmann::json::array();
+				BattleHexArray reachable = battleGetAvailableHexes(stack, false);
+				for (const BattleHex &hex : reachable)
+				{
+					a["reachable_tiles"].push_back({
+						{"x", hex.getX()},
+						{"y", hex.getY()},
+						{"hex", hex.toInt()}
+					});
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::ATTACK:
+			case PossiblePlayerBattleAction::ATTACK_AND_RETURN:
+			case PossiblePlayerBattleAction::WALK_AND_ATTACK:
+			{
+				a["melee_targets"] = nlohmann::json::array();
+				for (const auto &targetPtr : stacks)
+				{
+					const CStack *target = targetPtr.get();
+					if (target != stack && target->alive() && target->unitSide() != stack->unitSide())
+					{
+						BattleHex fromHex = getAttackFromHex(stack, target);
+						nlohmann::json targetEntry = {
+							{"stack_id", target->unitId()},
+							{"x", target->position.getX()},
+							{"y", target->position.getY()},
+							{"hex", target->position.toInt()}
+						};
+
+						if (fromHex.isValid())
+						{
+							targetEntry["attack_from"] = {
+								{"x", fromHex.getX()},
+								{"y", fromHex.getY()},
+								{"hex", fromHex.toInt()}
+							};
+						}
+
+						bool canMeleeAttack = fromHex.isValid() && fromHex.toInt() != target->position.toInt();
+						targetEntry["can_melee_attack"] = canMeleeAttack;
+
+						a["melee_targets"].push_back(targetEntry);
+					}
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::SHOOT:
+			{
+				if (stack->canShoot())
+				{
+					a["ranged_targets"] = nlohmann::json::array();
+					for (const auto &targetPtr : stacks)
+					{
+						const CStack *target = targetPtr.get();
+						if (target != stack && target->alive() && target->unitSide() != stack->unitSide())
+						{
+							a["ranged_targets"].push_back({
+								{"stack_id", target->unitId()},
+								{"x", target->position.getX()},
+								{"y", target->position.getY()},
+								{"hex", target->position.toInt()}
+							});
+						}
+					}
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::AIMED_SPELL_CREATURE:
+			case PossiblePlayerBattleAction::ANY_LOCATION:
+			case PossiblePlayerBattleAction::NO_LOCATION:
+			case PossiblePlayerBattleAction::FREE_LOCATION:
+			case PossiblePlayerBattleAction::OBSTACLE:
+			case PossiblePlayerBattleAction::TELEPORT:
+			case PossiblePlayerBattleAction::RANDOM_GENIE_SPELL:
+			{
+				a["spell_targeting"] = true;
+				if (action.spell().hasValue())
+					a["spell_id"] = static_cast<int>(action.spell().toEnum());
+
+				const CSpell *spellPtr = action.spell().toSpell();
+				a["spell_targets"] = nlohmann::json::array();
+				for (const auto &targetPtr : stacks)
+				{
+					const CStack *target = targetPtr.get();
+					if (!target->alive() || !spellPtr)
+						continue;
+
+					if (!isCastingPossibleHere(spellPtr, target, target->position))
+						continue;
+
+					a["spell_targets"].push_back({
+						{"stack_id", target->unitId()},
+						{"x", target->position.getX()},
+						{"y", target->position.getY()},
+						{"hex", target->position.toInt()}
+					});
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::CREATURE_INFO:
+			case PossiblePlayerBattleAction::HERO_INFO:
+			case PossiblePlayerBattleAction::CATAPULT:
+			case PossiblePlayerBattleAction::HEAL:
+			{
+				a["misc"] = true;
+				break;
+			}
+			default:
+				a["note"] = "Unhandled or unknown action type";
+				break;
+		}
+
+
+		j["actions"].push_back(a);
+	}
+
+	// Add turn number
+	j["turn"] = turnCounter;
+
+	// Increment turn counter only when this function is executed
+	++turnCounter;
+
+	// Read the existing file if present
+	std::ifstream inFile(logFilePath);
+	nlohmann::json log = nlohmann::json::array();
+	if (inFile.good())
+	{
+		try { inFile >> log; }
+		catch (...) { log = nlohmann::json::array(); }
+	}
+	inFile.close();
+
+	// Append this turn's actions
+	log.push_back(j);
+
+	// Write entire array back to disk
+	std::ofstream outFile(logFilePath, std::ios::trunc);
+	outFile << log.dump(2); // pretty format
+	outFile.close();
+}
+
+
+
 
 VCMI_LIB_NAMESPACE_BEGIN
 
@@ -432,6 +1140,7 @@ std::unique_ptr<BattleInfo> BattleInfo::setupBattle(IGameInfoCallback *cb, const
 			currentBattle->tacticDistance = 0;
 	}
 
+
 	return currentBattle;
 }
 
@@ -667,6 +1376,7 @@ void BattleInfo::nextRound()
 		obst->battleTurnPassed();
 }
 
+
 void BattleInfo::nextTurn(uint32_t unitId, BattleUnitTurnReason reason)
 {
 	activeStack = unitId;
@@ -677,7 +1387,11 @@ void BattleInfo::nextTurn(uint32_t unitId, BattleUnitTurnReason reason)
 	st->removeBonusesRecursive(Bonus::UntilGetsTurn);
 
 	st->afterGetsTurn(reason);
+
+	// Call export function
+	exportBattleStateToJson();
 }
+
 
 void BattleInfo::addUnit(uint32_t id, const JsonNode & data)
 {

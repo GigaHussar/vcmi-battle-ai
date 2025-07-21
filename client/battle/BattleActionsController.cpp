@@ -7,8 +7,13 @@
  * Full text of license available in license.txt file, in main folder
  *
  */
+#include <fstream>
+#include "../../external/json/json.hpp"
+
 #include "StdInc.h"
 #include "BattleActionsController.h"
+BattleActionsController* GLOBAL_SOCKET_ACTION_CONTROLLER = nullptr;
+#include "../../lib/battle/BattleInfo.h"
 
 #include "BattleWindow.h"
 #include "BattleStacksController.h"
@@ -137,6 +142,7 @@ BattleActionsController::BattleActionsController(BattleInterface & owner):
 	selectedStack(nullptr),
 	heroSpellToCast(nullptr)
 {
+	GLOBAL_SOCKET_ACTION_CONTROLLER = this;
 }
 
 void BattleActionsController::endCastingSpell()
@@ -1029,6 +1035,316 @@ bool BattleActionsController::canStackMoveHere(const CStack * stackToMove, const
 		return false;
 }
 
+void BattleActionsController::generateClientExportFileName()
+{
+	if (!exportFileNameAction.empty())
+		return;
+	
+	using namespace std::chrono;
+
+	auto now = system_clock::now();
+	auto now_ns = time_point_cast<nanoseconds>(now);
+	auto epoch = now_ns.time_since_epoch();
+
+	auto seconds_since_epoch = duration_cast<seconds>(epoch);
+	auto ms_part = duration_cast<milliseconds>(epoch - seconds_since_epoch).count();
+	auto ns_part = duration_cast<nanoseconds>(epoch - seconds_since_epoch).count() % 1000000;
+
+	auto t = system_clock::to_time_t(now);
+	std::tm tm = *std::localtime(&t);
+
+	std::ostringstream timestampStream;
+	timestampStream << std::put_time(&tm, "%Y%m%d_%H%M%S");
+	timestampStream << "_" << std::setw(3) << std::setfill('0') << ms_part;
+	timestampStream << "_" << std::setw(6) << std::setfill('0') << ns_part;
+
+	std::random_device rd;
+	std::mt19937 gen(rd());
+	std::uniform_int_distribution<> dis(0, 0xFFFFFF);
+	std::ostringstream randomIdStream;
+	randomIdStream << std::hex << std::setw(6) << std::setfill('0') << dis(gen);
+
+	std::string exportIdAction = timestampStream.str() + "_" + randomIdStream.str();
+	exportFileNameAction = "battle_" + exportIdAction + "_available_actions.json";
+}
+
+void BattleActionsController::exportPossibleActionsToJson(const CStack *stack, const std::vector<PossiblePlayerBattleAction> &actions)
+{	
+	//generateClientExportFileName();
+	// Set up log file path
+	std::filesystem::path exportPath = "../../export";
+	std::filesystem::create_directories(exportPath);
+	std::filesystem::path logFilePath = exportPath / "possible_actions.json";
+
+
+	// Static turn counter, incremented only when this function is executed
+	static int turnCounter = 0;
+
+	// Prepare the data for this stack for this turn
+	nlohmann::json j;
+	j["stack_id"] = stack->unitId();
+	const BattleHex &pos = stack->position;
+	j["origin"] = {
+		{"x", pos.getX()},
+		{"y", pos.getY()},
+		{"hex", pos.toInt()}
+	};
+	j["actions"] = nlohmann::json::array();
+
+	// Add spellcaster flag
+	bool isSpellcaster = stack->hasBonusOfType(BonusType::SPELLCASTER) && stack->canCast();
+	j["is_spellcaster"] = isSpellcaster;
+
+	bool canWait = !stack->waitedThisTurn;      // legal ⇔ unit has not waited yet
+	j["can_wait"] = canWait;                    // write to JSON
+
+	// Export known creature spells
+	nlohmann::json creatureSpellsJson = nlohmann::json::array();
+	TConstBonusListPtr bl = stack->getBonusesOfType(BonusType::SPELLCASTER);
+	for (const auto &bonus : *bl)
+	{
+		if (bonus->additionalInfo[0] <= 0 && bonus->subtype.as<SpellID>().hasValue())
+		{
+			const CSpell *s = bonus->subtype.as<SpellID>().toSpell();
+			if (s)
+			{
+				creatureSpellsJson.push_back({
+					{"spell_id", s->id.getNum()},
+					{"name", s->getNameTranslated()}
+				});
+			}
+		}
+	}
+	j["creature_spells"] = creatureSpellsJson;
+
+	// Determine creature spellcasting targets
+	nlohmann::json spellcastTargets = nlohmann::json::array();
+
+	if (isSpellcaster)
+	{
+		for (const auto &action : actions)
+		{
+			if (action.get() != PossiblePlayerBattleAction::NO_LOCATION)
+				continue;
+
+			const spells::Caster *caster = stack;
+			const CSpell *spell = action.spell().toSpell();
+			if (!spell)
+				continue;
+
+			spells::Target target;
+			target.emplace_back();
+			spells::BattleCast cast(owner.getBattle().get(), caster, spells::Mode::CREATURE_ACTIVE, spell);
+			auto m = spell->battleMechanics(&cast);
+			spells::detail::ProblemImpl ignored;
+
+			if (m->canBeCastAt(target, ignored))
+			{
+				for (const CStack *unit : owner.getBattle()->battleGetAllStacks())
+				{
+					if (!unit->alive())
+						continue;
+					if (!isCastingPossibleHere(spell, unit, unit->getPosition()))
+						continue;
+
+					spellcastTargets.push_back({
+						{"stack_id", unit->unitId()},
+						{"x", unit->position.getX()},
+						{"y", unit->position.getY()},
+						{"hex", unit->position.toInt()}
+					});
+				}
+				break;
+			}
+		}
+	}
+	j["creature_spellcast_possible"] = !spellcastTargets.empty();
+	j["creature_spellcast_targets"] = spellcastTargets;
+
+	// Hero spellcasting info
+	const CGHeroInstance *castingHero = (owner.attackingHeroInstance && owner.attackingHeroInstance->tempOwner == owner.curInt->playerID)
+										? owner.attackingHeroInstance
+										: owner.defendingHeroInstance;
+
+	if (castingHero && castingHero->hasSpellbook())
+	{
+		j["hero_spellcasting_available"] = true;
+		j["hero_can_still_cast_this_round"] = owner.getBattle()->battleCanCastSpell(castingHero, spells::Mode::HERO) == ESpellCastProblem::OK;
+
+		nlohmann::json heroSpells = nlohmann::json::array();
+		for (const auto &spell : castingHero->getSpellsInSpellbook())
+		{
+			nlohmann::json spellJson;
+			spellJson["spell_id"] = spell.getNum();
+			spellJson["targets"] = nlohmann::json::array();
+
+			const CSpell *spellPtr = spell.toSpell();
+			if (spellPtr)
+			{   
+				spellJson["can_cast_now"] = spellPtr->canBeCast(owner.getBattle().get(), spells::Mode::HERO, castingHero);
+
+				for (const CStack *unit : owner.getBattle()->battleGetAllStacks())
+				{
+					if (!unit->alive()) continue;
+					if (!isCastingPossibleHere(spellPtr, unit, unit->getPosition())) continue;
+
+					spellJson["targets"].push_back({
+						{"stack_id", unit->unitId()},
+						{"x", unit->position.getX()},
+						{"y", unit->position.getY()},
+						{"hex", unit->position.toInt()}
+					});
+				}
+			}
+			heroSpells.push_back(spellJson);
+		}
+		j["hero_spells"] = heroSpells;
+	}
+	else
+	{
+		j["hero_spellcasting_available"] = false;
+		j["hero_spells"] = nlohmann::json::array();
+	}
+
+	for (const auto &action : actions)
+	{
+		nlohmann::json a;
+		a["type"] = static_cast<int>(action.get());
+
+		switch (action.get())
+		{
+			case PossiblePlayerBattleAction::MOVE_STACK:
+			{
+				a["reachable_tiles"] = nlohmann::json::array();
+				BattleHexArray reachable = owner.getBattle()->battleGetAvailableHexes(stack, false);
+				for (const BattleHex &hex : reachable)
+				{
+					a["reachable_tiles"].push_back({
+						{"x", hex.getX()},
+						{"y", hex.getY()},
+						{"hex", hex.toInt()}
+					});
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::ATTACK:
+			case PossiblePlayerBattleAction::ATTACK_AND_RETURN:
+			case PossiblePlayerBattleAction::WALK_AND_ATTACK:
+			{
+				a["melee_targets"] = nlohmann::json::array();
+				for (const CStack *target : owner.getBattle()->battleGetAllStacks())
+				{
+					if (target != stack && target->alive() && target->unitSide() != stack->unitSide())
+					{
+						BattleHex fromHex;
+						if (owner.fieldController)
+							fromHex = owner.fieldController->fromWhichHexAttack(target->getPosition());
+
+						nlohmann::json targetEntry = {
+							{"stack_id", target->unitId()},
+							{"x", target->position.getX()},
+							{"y", target->position.getY()},
+							{"hex", target->position.toInt()}
+						};
+
+						if (fromHex.isValid())
+						{
+							targetEntry["attack_from"] = {
+								{"x", fromHex.getX()},
+								{"y", fromHex.getY()},
+								{"hex", fromHex.toInt()}
+							};
+						}
+
+						// Add can_melee_attack field
+						bool canMeleeAttack = false;
+						if (fromHex.isValid() && fromHex.toInt() != target->position.toInt())
+							canMeleeAttack = true;
+						targetEntry["can_melee_attack"] = canMeleeAttack;
+
+						a["melee_targets"].push_back(targetEntry);
+					}
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::SHOOT:
+			{
+				if (stack->canShoot())
+				{
+					a["ranged_targets"] = nlohmann::json::array();
+					for (const CStack *target : owner.getBattle()->battleGetAllStacks())
+					{
+						if (target != stack && target->alive() && target->unitSide() != stack->unitSide())
+						{
+							nlohmann::json targetEntry = {
+								{"stack_id", target->unitId()},
+								{"x", target->position.getX()},
+								{"y", target->position.getY()},
+								{"hex", target->position.toInt()}
+							};
+							a["ranged_targets"].push_back(targetEntry);
+						}
+					}
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::AIMED_SPELL_CREATURE:
+			case PossiblePlayerBattleAction::ANY_LOCATION:
+			case PossiblePlayerBattleAction::NO_LOCATION:
+			case PossiblePlayerBattleAction::FREE_LOCATION:
+			case PossiblePlayerBattleAction::OBSTACLE:
+			case PossiblePlayerBattleAction::TELEPORT:
+			case PossiblePlayerBattleAction::RANDOM_GENIE_SPELL:
+			{
+				a["spell_targeting"] = true;
+				if (action.spell().hasValue())
+					a["spell_id"] = static_cast<int>(action.spell().toEnum());
+
+				const CSpell *spellPtr = action.spell().toSpell();
+				a["spell_targets"] = nlohmann::json::array();
+				for (const CStack *target : owner.getBattle()->battleGetAllStacks())
+				{
+					if (!target->alive()) continue;
+					if (!spellPtr) continue;
+					if (!isCastingPossibleHere(spellPtr, target, target->getPosition())) continue;
+
+					a["spell_targets"].push_back({
+						{"stack_id", target->unitId()},
+						{"x", target->position.getX()},
+						{"y", target->position.getY()},
+						{"hex", target->position.toInt()}
+					});
+				}
+				break;
+			}
+			case PossiblePlayerBattleAction::CREATURE_INFO:
+			case PossiblePlayerBattleAction::HERO_INFO:
+			case PossiblePlayerBattleAction::CATAPULT:
+			case PossiblePlayerBattleAction::HEAL:
+			{
+				a["misc"] = true;
+				break;
+			}
+			default:
+				a["note"] = "Unhandled or unknown action type";
+				break;
+		}
+
+		j["actions"].push_back(a);
+	}
+
+	// Add turn number
+	j["turn"] = turnCounter;
+
+	// Increment turn counter only when this function is executed
+	++turnCounter;
+
+	std::ofstream outFile(logFilePath, std::ios::trunc);
+	outFile << j.dump(2); // pretty format
+	outFile.close();
+}
+
+
 void BattleActionsController::activateStack()
 {
 	const CStack * s = owner.stacksController->getActiveStack();
@@ -1037,6 +1353,7 @@ void BattleActionsController::activateStack()
 		tryActivateStackSpellcasting(s);
 
 		possibleActions = getPossibleActionsForStack(s);
+		exportPossibleActionsToJson(s, possibleActions);
 		std::list<PossiblePlayerBattleAction> actionsToSelect;
 		if(!possibleActions.empty())
 		{
@@ -1136,4 +1453,101 @@ void BattleActionsController::pushFrontPossibleAction(PossiblePlayerBattleAction
 void BattleActionsController::resetCurrentStackPossibleActions()
 {
 	possibleActions = getPossibleActionsForStack(owner.stacksController->getActiveStack());
+}
+
+// This function handles socket commands to control battle actions for the active stack.
+// Available commands:
+// - "move <hex>": Move to the specified hex tile.
+// - "melee <target_hex> <from_hex>": Perform a melee attack on target_hex from from_hex.
+// - "heal <target_id>": Heal the stack with the specified ID.
+// - "shoot <target_id>": Shoot at the stack with the specified ID. (battle id like 0 or 1 or 2)
+// - "cast <target_id> <spell_id>": Cast a creature spell at the specified target ID with the given spell ID.
+// - "wait": Perform a wait action.
+// - "defend": Perform a defend action.
+// - "endtactic <side>": Ends the tactic phase for the given side (0 for attacker, 1 for defender).
+// - "surrender <side>": Makes the specified side surrender (0 for attacker, 1 for defender).
+// - "retreat <side>": Makes the specified side retreat (0 for attacker, 1 for defender).
+
+void BattleActionsController::performSocketCommand(const std::string &cmd)
+{
+	const CStack* stack = owner.stacksController->getActiveStack();
+	if (!stack)
+	{
+		logGlobal->warn("No active stack available.");
+		return;
+	}
+
+	// move <hex>: Moves the active stack to the specified hex tile
+	if (cmd.rfind("move ", 0) == 0)
+	{
+		std::string hexStr = cmd.substr(5);
+		int hex = std::stoi(hexStr);
+
+		logGlobal->info("Move command: stack %d -> hex %d", stack->unitId(), hex);
+
+		BattleHex dest(hex);
+		BattleAction action = BattleAction::makeMove(stack, dest);
+
+		owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+	}
+	// wait: Makes the active stack wait
+	else if (cmd == "wait")
+	{
+		logGlobal->info("Wait command: stack %d waits", stack->unitId());
+
+		BattleAction action = BattleAction::makeWait(stack);
+		owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+	}
+	// defend: Makes the active stack defend
+	else if (cmd == "defend")
+	{
+		logGlobal->info("Defend command: stack %d defends", stack->unitId());
+
+		BattleAction action = BattleAction::makeDefend(stack);
+		owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+	}
+	// melee <target_hex> <from_hex>: Perform a melee attack
+	else if (cmd.rfind("melee ", 0) == 0)
+	{
+		std::istringstream iss(cmd.substr(6));
+		int targetHexInt, fromHexInt;
+		iss >> targetHexInt >> fromHexInt;
+
+		BattleHex targetHex(targetHexInt);
+		BattleHex fromHex(fromHexInt);
+
+		logGlobal->info("Melee command: stack %d attacks hex %d from hex %d", stack->unitId(), targetHexInt, fromHexInt);
+
+		BattleAction action = BattleAction::makeMeleeAttack(stack, targetHex, fromHex, /*returnAfterAttack*/false);
+		owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+	}
+	// shoot <target_id>: Shoots at the specified target stack
+	else if (cmd.rfind("shoot ", 0) == 0)
+	{
+		int targetId = std::stoi(cmd.substr(6));
+
+		const CStack* target = nullptr;
+		for (const auto& s : owner.getBattle()->battleGetAllStacks())
+		{
+			if (s->unitId() == targetId)
+			{
+				target = s;
+				break;
+			}
+		}
+
+		if (target)
+		{
+			logGlobal->info("Shoot command: stack %d shoots at stack %d", stack->unitId(), target->unitId());
+			BattleAction action = BattleAction::makeShotAttack(stack, target);
+			owner.curInt->cb->battleMakeUnitAction(owner.getBattleID(), action);
+		}
+		else
+		{
+			logGlobal->warn("Shoot target with ID %d not found", targetId);
+		}
+	}	else
+	{
+		logGlobal->warn("Unknown command: %s", cmd.c_str());
+	}
 }

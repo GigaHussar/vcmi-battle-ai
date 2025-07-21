@@ -1,3 +1,5 @@
+/export
+/h3ai/api_key.py
 /client/vcmiclient
 /server/vcmiserver
 /launcher/.lupdate
