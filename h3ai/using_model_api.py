@@ -1,7 +1,7 @@
 import json
 import subprocess
 from typing import Optional
-from _paths_do_not_touch import EXPORT_DIR, ACTIONS_FILE, BATTLE_JSON_PATH  # Assumes this is defined in your environment
+from _paths_do_not_touch import EXPORT_DIR, ACTIONS_FILE, BATTLE_JSON_PATH 
 import requests
 import socket
 import time
@@ -14,7 +14,7 @@ ollama = {
 }
 
 # Configurable model
-MODEL_CONFIG = claude
+MODEL_CONFIG = ollama
 
 def extract_available_actions() -> list[str]:
     """

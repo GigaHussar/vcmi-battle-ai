@@ -6,34 +6,17 @@ Battle‑playing agent:
    • sends it back to VCMI
 """
 import time
-import torch
-import json
-import numpy as np
-from using_model_api import summarize_battle_state, extract_available_actions, query_gemma3_with_battle_state
-from model import StateActionValueNet, ActionEncoder
-from _helpers_do_not_touch import (
-    encode_battle_state_from_json, extract_all_possible_commands,
-    format_command_for_vcmi, read_json, send_command,
-    get_army_strengths, compute_performance, organize_export_files,
-    save_battle_state_to_tensors, log_turn_to_csv, fill_battle_rewards
-)
-from file2 import save_action_tensor, save_chosen_index
+from using_model_api import query_gemma3_with_battle_state
+from _helpers_do_not_touch import read_json, send_command, get_army_strengths
 from _paths_do_not_touch import (
     MODEL_WEIGHTS, EXPORT_DIR, BATTLE_JSON_PATH, ACTIONS_FILE
 )
 from _runvcmi_do_not_touch import open_vcmi_process, close_vcmi_process
-from online_finetune import fine_tune_after_battle
 
 CHECK_INTERVAL = 4
 
 
 def battle_loop():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    net = StateActionValueNet().to(device)
-    net.load_state_dict(torch.load(MODEL_WEIGHTS, map_location=device))
-    net.eval()
-
-    act_enc = ActionEncoder().to(device)
 
     open_vcmi_process()
     time.sleep(5)
@@ -67,11 +50,8 @@ def battle_loop():
 
         time.sleep(2)
         # end‑of‑battle detection -------------------------------------------
-        # Load the file
-        with open(ACTIONS_FILE, "r") as f:
-            data = json.load(f)
-        # Grab the turn number
-        turn_number = data["turn"]
+        # Use already parsed actions_json
+        turn_number = actions_json.get("turn")
         print(turn_number)
 
         print(last_turn)
@@ -81,15 +61,8 @@ def battle_loop():
         if init_att is None:
             init_att, init_def = get_army_strengths(state_json)
         time.sleep(CHECK_INTERVAL)
-
-
-    
+  
     close_vcmi_process()
 
-    time.sleep(2)
-    
-    organize_export_files()
 
-for i in range(1):
-    battle_loop()
-    print(i)
+battle_loop()
